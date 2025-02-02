@@ -194,17 +194,17 @@ class SmartReminder(Star):
             elif repeat == "yearly":
                 repeat_str = "，每年重复"
             
-            return f"已设置提醒:\n内容: {text}\n时间: {datetime_str}{repeat_str}\n\n使用 /rmd ls 查看所有提醒"
+            return f"已设置任务:\n内容: {text}\n时间: {datetime_str}{repeat_str}\n\n使用 /rmd ls 查看所有任务"
             
         except Exception as e:
-            return f"设置提醒时出错：{str(e)}"
+            return f"设置任务时出错：{str(e)}"
 
     async def _reminder_callback(self, unified_msg_origin: str, reminder: dict):
         '''提醒回调函数'''
         provider = self.context.get_using_provider()
         if provider:
             # 使用LLM生成更自然的提醒消息
-            prompt = f"你现在在和{reminder['user_name']}对话，发出提醒给他，提醒内容是'{reminder['text']}'，如果提醒内容是要求你做事，比如讲故事，你就执行。最后，直接发出对话内容，就是你说的话，不要有其他的背景描述。"
+            prompt = f"你现在在和{reminder['user_name']}对话，发出提醒给他，提醒内容是'{reminder['text']}'，如果提醒内容是要求你做事，比如讲故事，你就执行。直接发出对话内容，就是你说的话，不要有其他的背景描述。"
             response = await provider.text_chat(
                 prompt=prompt,
                 session_id=unified_msg_origin
@@ -223,39 +223,39 @@ class SmartReminder(Star):
         '''列出所有提醒'''
         reminders = self.reminder_data.get(event.unified_msg_origin, [])
         if not reminders:
-            yield event.plain_result("当前没有设置任何提醒。")
+            yield event.plain_result("当前没有设置任何任务。")
             return
             
         provider = self.context.get_using_provider()
         if provider:
             reminder_list = "\n".join([f"- {r['text']} (时间: {r['datetime']})" for r in reminders])
-            prompt = f"请帮我整理并展示以下提醒列表，用自然的语言表达：\n{reminder_list}\n同时告诉用户可以使用/rmd rm <序号>来删除提醒。"
+            prompt = f"请帮我整理并展示以下任务列表，用自然的语言表达：\n{reminder_list}\n同时告诉用户可以使用/rmd rm <序号>来删除提醒。直接发出对话内容，就是你说的话，不要有其他的背景描述。"
             response = await provider.text_chat(
                 prompt=prompt,
                 session_id=event.session_id
             )
             yield event.plain_result(response.completion_text)
         else:
-            reminder_str = "当前的提醒：\n"
+            reminder_str = "当前的任务：\n"
             for i, reminder in enumerate(reminders):
                 reminder_str += f"{i+1}. {reminder['text']} - {reminder['datetime']}\n"
-            reminder_str += "\n使用 /rmd rm <序号> 删除提醒"
+            reminder_str += "\n使用 /rmd rm <序号> 删除任务"
             yield event.plain_result(reminder_str)
 
     @rmd.command("rm")
     async def remove_reminder(self, event: AstrMessageEvent, index: int):
-        '''删除提醒
+        '''删除任务
         
         Args:
-            index(int): 提醒的序号
+            index(int): 任务的序号
         '''
         reminders = self.reminder_data.get(event.unified_msg_origin, [])
         if not reminders:
-            yield event.plain_result("没有设置任何提醒。")
+            yield event.plain_result("没有设置任何任务。")
             return
             
         if index < 1 or index > len(reminders):
-            yield event.plain_result("提醒序号无效。")
+            yield event.plain_result("任务序号无效。")
             return
             
         removed = reminders.pop(index - 1)
@@ -263,14 +263,14 @@ class SmartReminder(Star):
         
         provider = self.context.get_using_provider()
         if provider:
-            prompt = f"用户删除了一个提醒，内容是'{removed['text']}'。请用自然的语言确认删除操作。"
+            prompt = f"用户删除了一个任务，内容是'{removed['text']}'。请用自然的语言确认删除操作。直接发出对话内容，就是你说的话，不要有其他的背景描述。"
             response = await provider.text_chat(
                 prompt=prompt,
                 session_id=event.session_id
             )
             yield event.plain_result(response.completion_text)
         else:
-            yield event.plain_result(f"已删除提醒：{removed['text']}")
+            yield event.plain_result(f"已删除任务：{removed['text']}")
 
 
 
