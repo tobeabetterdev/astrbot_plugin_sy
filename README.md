@@ -59,5 +59,5 @@
 
 ## 支持
 
-如需帮助，请参考 [AstrBot插件开发文档](https://astrbot.soulter.top/center/docs/%E5%BC%80%E5%8F%91/%E6%8F%92%E4%BB%B6%E5%BC%80%E5%8F%91/)
+如需帮助，请参考 [AstrBot插件开发文档](https://astrbot.soulter.top/dev/plugin.html/)
 
