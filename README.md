@@ -8,7 +8,6 @@
 - AI智能化提醒，生成自然语言的提醒内容
 - 支持多种重复模式：每天、每周、每月、每年
 - 简单的命令管理系统
-- 持久化存储提醒数据
 
 ## 安装方法
 
@@ -47,10 +46,6 @@
 - `monthly`: 每月重复
 - `yearly`: 每年重复
 
-## 配置说明
-
-插件会在其目录下自动创建 `reminder.json` 文件用于存储提醒数据，无需手动配置。
-
 ## 依赖要求
 
 - AstrBot 框架
@@ -66,7 +61,3 @@
 
 如需帮助，请参考 [AstrBot插件开发文档](https://astrbot.soulter.top/center/docs/%E5%BC%80%E5%8F%91/%E6%8F%92%E4%BB%B6%E5%BC%80%E5%8F%91/)
 
-## 问题反馈
-
-如有问题或建议，请访问以下地址反馈：
-https://github.com/kjqwer/astrbot_plugin_sy
