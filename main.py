@@ -102,13 +102,13 @@ class SmartReminder(Star):
             json.dump(self.reminder_data, f, ensure_ascii=False)
 
     @filter.llm_tool(name="set_reminder")
-    async def set_reminder(self, event: Union[AstrMessageEvent, Context], text: str, datetime_str: str, user_name: str, repeat: str = None):
+    async def set_reminder(self, event: Union[AstrMessageEvent, Context], text: str, datetime_str: str, user_name: str = "用户", repeat: str = None):
         '''设置一个定时任务，这个任务可以是提醒，也可以是让作为执行者的自己做一件事
         
         Args:
             text(string): 任务内容
             datetime_str(string): 任务时间，格式为 %Y-%m-%d %H:%M
-            user_name(string): 对象名称，任务享受者
+            user_name(string): 对象名称，任务享受者，默认为"用户"
             repeat(string): 重复类型，可选值：daily(每天)，weekly(每周)，monthly(每月)，yearly(每年)，none(不重复)
         '''
         try:
