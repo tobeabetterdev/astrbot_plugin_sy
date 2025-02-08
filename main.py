@@ -3,6 +3,7 @@ from astrbot.api.star import Context, Star, register
 from astrbot.api.message_components import *
 from astrbot.api.event.filter import command, command_group
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from astrbot.api import logger
 import datetime
 import json
 import os
@@ -209,6 +210,7 @@ class SmartReminder(Star):
                 prompt=prompt,
                 session_id=unified_msg_origin
             )
+            logger.info(f"Reminder Activated: {reminder['text']}, created by {unified_msg_origin}")
             await self.context.send_message(unified_msg_origin, MessageEventResult().message("[提醒]"+response.completion_text))
         else:
             await self.context.send_message(unified_msg_origin, MessageEventResult().message(f"提醒: {reminder['text']}"))
