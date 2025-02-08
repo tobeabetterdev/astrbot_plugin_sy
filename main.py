@@ -4,6 +4,7 @@ from astrbot.api.message_components import *
 from astrbot.api.event.filter import command, command_group
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from astrbot.api import logger
+from astrbot.api.event import MessageChain
 import datetime
 import json
 import os
@@ -115,8 +116,10 @@ class SmartReminder(Star):
         try:
             if isinstance(event, Context):
                 msg_origin = self.context.get_event_queue()._queue[0].session_id
+                creator_id = None  # Context 模式下无法获取创建者ID
             else:
                 msg_origin = event.unified_msg_origin
+                creator_id = event.get_sender_id() if event.message_obj.group_id else None
             
             if msg_origin not in self.reminder_data:
                 self.reminder_data[msg_origin] = []
@@ -125,7 +128,8 @@ class SmartReminder(Star):
                 "text": text,
                 "datetime": datetime_str,
                 "user_name": user_name,
-                "repeat": repeat or "none"
+                "repeat": repeat or "none",
+                "creator_id": creator_id  # 新增：存储创建者ID
             }
             
             self.reminder_data[msg_origin].append(reminder)
@@ -204,16 +208,37 @@ class SmartReminder(Star):
         '''提醒回调函数'''
         provider = self.context.get_using_provider()
         if provider:
-            # 使用LLM生成更自然的提醒消息
+            # 构建提醒消息
             prompt = f"你现在在和{reminder['user_name']}对话，发出提醒给他，提醒内容是'{reminder['text']}'，如果提醒内容是要求你做事，比如讲故事，你就执行。直接发出对话内容，就是你说的话，不要有其他的背景描述。"
             response = await provider.text_chat(
                 prompt=prompt,
                 session_id=unified_msg_origin
             )
             logger.info(f"Reminder Activated: {reminder['text']}, created by {unified_msg_origin}")
-            await self.context.send_message(unified_msg_origin, MessageEventResult().message("[提醒]"+response.completion_text))
+            
+            # 构建消息链
+            msg = MessageChain()
+            
+            # 如果是群聊且存在创建者ID，则添加@
+            if "creator_id" in reminder and reminder["creator_id"]:
+                msg.chain.append(At(qq=reminder["creator_id"]))
+                msg.chain.append(Plain(" "))  # 添加空格分隔
+            
+            msg.chain.append(Plain("[提醒]" + response.completion_text))
+            
+            await self.context.send_message(unified_msg_origin, msg)
         else:
-            await self.context.send_message(unified_msg_origin, MessageEventResult().message(f"提醒: {reminder['text']}"))
+            # 构建基础消息链
+            msg = MessageChain()
+            
+            # 如果是群聊且存在创建者ID，则添加@
+            if "creator_id" in reminder and reminder["creator_id"]:
+                msg.chain.append(At(qq=reminder["creator_id"]))
+                msg.chain.append(Plain(" "))  # 添加空格分隔
+            
+            msg.chain.append(Plain(f"提醒: {reminder['text']}"))
+            
+            await self.context.send_message(unified_msg_origin, msg)
 
     @command_group("rmd")
     def rmd(self):
@@ -273,6 +298,143 @@ class SmartReminder(Star):
             yield event.plain_result(response.completion_text)
         else:
             yield event.plain_result(f"已删除任务：{removed['text']}")
+
+    @rmd.command("add")
+    async def add_reminder(self, event: AstrMessageEvent, text: str, datetime_str: str, repeat: str = None):
+        '''手动添加提醒
+        
+        Args:
+            text(string): 提醒内容
+            datetime_str(string): 提醒时间，格式为 %Y-%m-%d %H:%M
+            repeat(string): 可选，重复类型：daily(每天)，weekly(每周)，monthly(每月)，yearly(每年)
+        '''
+        try:
+            # 验证时间格式
+            try:
+                datetime.datetime.strptime(datetime_str, "%Y-%m-%d %H:%M")
+            except ValueError:
+                yield event.plain_result("时间格式错误，请使用 YYYY-MM-DD HH:MM 格式")
+                return
+
+            # 验证重复类型
+            if repeat and repeat not in ["daily", "weekly", "monthly", "yearly"]:
+                yield event.plain_result("重复类型错误，可选值：daily(每天)，weekly(每周)，monthly(每月)，yearly(每年)")
+                return
+
+            msg_origin = event.unified_msg_origin
+            creator_id = event.get_sender_id()
+            
+            if msg_origin not in self.reminder_data:
+                self.reminder_data[msg_origin] = []
+            
+            reminder = {
+                "text": text,
+                "datetime": datetime_str,
+                "user_name": creator_id,  # 对象就是创建者自己
+                "repeat": repeat or "none",
+                "creator_id": creator_id
+            }
+            
+            self.reminder_data[msg_origin].append(reminder)
+            
+            # 解析时间
+            dt = datetime.datetime.strptime(datetime_str, "%Y-%m-%d %H:%M")
+            
+            # 根据重复类型设置不同的触发器
+            if repeat == "daily":
+                self.scheduler.add_job(
+                    self._reminder_callback,
+                    'cron',
+                    args=[msg_origin, reminder],
+                    hour=dt.hour,
+                    minute=dt.minute,
+                    misfire_grace_time=60
+                )
+            elif repeat == "weekly":
+                self.scheduler.add_job(
+                    self._reminder_callback,
+                    'cron',
+                    args=[msg_origin, reminder],
+                    day_of_week=dt.weekday(),
+                    hour=dt.hour,
+                    minute=dt.minute,
+                    misfire_grace_time=60
+                )
+            elif repeat == "monthly":
+                self.scheduler.add_job(
+                    self._reminder_callback,
+                    'cron',
+                    args=[msg_origin, reminder],
+                    day=dt.day,
+                    hour=dt.hour,
+                    minute=dt.minute,
+                    misfire_grace_time=60
+                )
+            elif repeat == "yearly":
+                self.scheduler.add_job(
+                    self._reminder_callback,
+                    'cron',
+                    args=[msg_origin, reminder],
+                    month=dt.month,
+                    day=dt.day,
+                    hour=dt.hour,
+                    minute=dt.minute,
+                    misfire_grace_time=60
+                )
+            else:
+                self.scheduler.add_job(
+                    self._reminder_callback,
+                    'date',
+                    args=[msg_origin, reminder],
+                    run_date=dt,
+                    misfire_grace_time=60
+                )
+            
+            await self._save_data()
+            
+            repeat_str = ""
+            if repeat == "daily":
+                repeat_str = "，每天重复"
+            elif repeat == "weekly":
+                repeat_str = "，每周重复"
+            elif repeat == "monthly":
+                repeat_str = "，每月重复"
+            elif repeat == "yearly":
+                repeat_str = "，每年重复"
+            
+            yield event.plain_result(f"已设置提醒:\n内容: {text}\n时间: {datetime_str}{repeat_str}\n\n使用 /rmd ls 查看所有提醒")
+            
+        except Exception as e:
+            yield event.plain_result(f"设置提醒时出错：{str(e)}")
+
+    @rmd.command("help")
+    async def show_help(self, event: AstrMessageEvent):
+        '''显示帮助信息'''
+        help_text = """提醒功能指令说明：
+1. 手动添加提醒：
+   /rmd add <内容> <时间> [重复类型]
+   例如：
+   - /rmd add 写周报 2024-01-20 18:00
+   - /rmd add 喝水 2024-01-20 14:00 daily
+
+2. ai智能提醒:
+   直接和ai对话即可，ai会自动解析你的对话内容，并设置提醒，需要ai支持llm函数。
+
+3. 查看提醒：
+   /rmd ls - 列出所有提醒
+
+4. 删除提醒：
+   /rmd rm <序号> - 删除指定提醒
+
+5. 重复类型可选值：
+   - daily: 每天重复
+   - weekly: 每周重复
+   - monthly: 每月重复
+   - yearly: 每年重复
+   - 不填则不重复
+
+注：时间格式为 YYYY-MM-DD HH:MM"""
+        yield event.plain_result(help_text)
 
 
 
