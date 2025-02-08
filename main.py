@@ -10,7 +10,7 @@ import json
 import os
 from typing import Union
 
-@register("ai_reminder", "kjqwdw", "智能定时任务", "1.0.0")
+@register("ai_reminder", "kjqwdw", "智能定时任务，输入/rmd help查看帮助", "1.0.0")
 class SmartReminder(Star):
     def __init__(self, context: Context):
         super().__init__(context)
