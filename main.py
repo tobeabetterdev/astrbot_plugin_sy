@@ -219,10 +219,13 @@ class SmartReminder(Star):
             # 构建消息链
             msg = MessageChain()
             
-            # 如果存在创建者ID，则添加@（适用于所有平台）
+            # 如果存在创建者ID，则添加@
             if "creator_id" in reminder and reminder["creator_id"]:
-                msg.chain.append(At(user_id=reminder["creator_id"]))  # 使用通用的 user_id 参数
-                msg.chain.append(Plain(" "))  # 添加空格分隔
+                if ":" in unified_msg_origin and unified_msg_origin.startswith("aiocqhttp"):
+                    msg.chain.append(At(qq=reminder["creator_id"]))  # QQ平台
+                else:
+                    # 其他平台的@实现
+                    msg.chain.append(Plain(f"@{reminder['creator_id']} "))
             
             msg.chain.append(Plain("[提醒]" + response.completion_text))
             
@@ -231,10 +234,13 @@ class SmartReminder(Star):
             # 构建基础消息链
             msg = MessageChain()
             
-            # 如果存在创建者ID，则添加@（适用于所有平台）
+            # 如果存在创建者ID，则添加@
             if "creator_id" in reminder and reminder["creator_id"]:
-                msg.chain.append(At(user_id=reminder["creator_id"]))  # 使用通用的 user_id 参数
-                msg.chain.append(Plain(" "))  # 添加空格分隔
+                if ":" in unified_msg_origin and unified_msg_origin.startswith("aiocqhttp"):
+                    msg.chain.append(At(qq=reminder["creator_id"]))  # QQ平台
+                else:
+                    # 其他平台的@实现
+                    msg.chain.append(Plain(f"@{reminder['creator_id']} "))
             
             msg.chain.append(Plain(f"提醒: {reminder['text']}"))
             
