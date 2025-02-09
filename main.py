@@ -219,9 +219,9 @@ class SmartReminder(Star):
             # 构建消息链
             msg = MessageChain()
             
-            # 如果是群聊且存在创建者ID，则添加@
+            # 如果存在创建者ID，则添加@（适用于所有平台）
             if "creator_id" in reminder and reminder["creator_id"]:
-                msg.chain.append(At(qq=reminder["creator_id"]))
+                msg.chain.append(At(user_id=reminder["creator_id"]))  # 使用通用的 user_id 参数
                 msg.chain.append(Plain(" "))  # 添加空格分隔
             
             msg.chain.append(Plain("[提醒]" + response.completion_text))
@@ -231,9 +231,9 @@ class SmartReminder(Star):
             # 构建基础消息链
             msg = MessageChain()
             
-            # 如果是群聊且存在创建者ID，则添加@
+            # 如果存在创建者ID，则添加@（适用于所有平台）
             if "creator_id" in reminder and reminder["creator_id"]:
-                msg.chain.append(At(qq=reminder["creator_id"]))
+                msg.chain.append(At(user_id=reminder["creator_id"]))  # 使用通用的 user_id 参数
                 msg.chain.append(Plain(" "))  # 添加空格分隔
             
             msg.chain.append(Plain(f"提醒: {reminder['text']}"))
