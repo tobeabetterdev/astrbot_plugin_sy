@@ -305,6 +305,14 @@ class SmartReminder(Star):
             yield event.plain_result("任务序号无效。")
             return
             
+        # 删除调度任务
+        job_id = f"reminder_{event.unified_msg_origin}_{index-1}"
+        try:
+            self.scheduler.remove_job(job_id)
+            logger.info(f"Successfully removed job: {job_id}")
+        except JobLookupError:
+            logger.error(f"Job not found: {job_id}")
+            
         removed = reminders.pop(index - 1)
         await self._save_data()
         
@@ -692,6 +700,3 @@ class SmartReminder(Star):
             
         except Exception as e:
             return f"删除任务时出错：{str(e)}"
-
-
-
