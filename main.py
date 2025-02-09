@@ -3,6 +3,7 @@ from astrbot.api.star import Context, Star, register
 from astrbot.api.message_components import *
 from astrbot.api.event.filter import command, command_group
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.schedulers.base import JobLookupError
 from astrbot.api import logger
 from astrbot.api.event import MessageChain
 import datetime
@@ -622,7 +623,17 @@ class SmartReminder(Star):
             # 从后往前删除，避免索引变化
             deleted_reminders = []
             for i in sorted(to_delete, reverse=True):
-                deleted_reminders.append(reminders[i])
+                reminder = reminders[i]
+                # 生成任务ID
+                job_id = f"reminder_{msg_origin}_{reminder['text']}_{reminder['datetime']}"
+                # 从调度器中删除任务
+                try:
+                    self.scheduler.remove_job(job_id)
+                except JobLookupError:
+                    # 如果任务已经不存在，忽略错误
+                    pass
+                
+                deleted_reminders.append(reminder)
                 reminders.pop(i)
             
             # 更新数据
