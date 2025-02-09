@@ -388,6 +388,9 @@ class SmartReminder(Star):
             
             self.reminder_data[msg_origin].append(reminder)
             
+            # 生成任务ID
+            job_id = f"reminder_{msg_origin}_{len(self.reminder_data[msg_origin])-1}"
+            
             # 设置定时任务
             if repeat == "daily":
                 self.scheduler.add_job(
@@ -397,7 +400,7 @@ class SmartReminder(Star):
                     hour=dt.hour,
                     minute=dt.minute,
                     misfire_grace_time=60,
-                    id=f"reminder_{msg_origin}_{len(self.reminder_data[msg_origin])-1}"
+                    id=job_id
                 )
             elif repeat == "weekly":
                 self.scheduler.add_job(
@@ -408,7 +411,7 @@ class SmartReminder(Star):
                     hour=dt.hour,
                     minute=dt.minute,
                     misfire_grace_time=60,
-                    id=f"reminder_{msg_origin}_{len(self.reminder_data[msg_origin])-1}"
+                    id=job_id
                 )
             elif repeat == "monthly":
                 self.scheduler.add_job(
@@ -419,7 +422,7 @@ class SmartReminder(Star):
                     hour=dt.hour,
                     minute=dt.minute,
                     misfire_grace_time=60,
-                    id=f"reminder_{msg_origin}_{len(self.reminder_data[msg_origin])-1}"
+                    id=job_id
                 )
             elif repeat == "yearly":
                 self.scheduler.add_job(
@@ -431,7 +434,7 @@ class SmartReminder(Star):
                     hour=dt.hour,
                     minute=dt.minute,
                     misfire_grace_time=60,
-                    id=f"reminder_{msg_origin}_{len(self.reminder_data[msg_origin])-1}"
+                    id=job_id
                 )
             else:
                 self.scheduler.add_job(
@@ -440,7 +443,7 @@ class SmartReminder(Star):
                     args=[msg_origin, reminder],
                     run_date=dt,
                     misfire_grace_time=60,
-                    id=f"reminder_{msg_origin}_{len(self.reminder_data[msg_origin])-1}"
+                    id=job_id
                 )
             
             await self._save_data()
