@@ -34,7 +34,7 @@ class SmartReminder(Star):
     def _init_scheduler(self):
         '''初始化定时器'''
         for group in self.reminder_data:
-            for reminder in self.reminder_data[group]:
+            for i, reminder in enumerate(self.reminder_data[group]):
                 if "datetime" not in reminder:
                     continue
                 
@@ -42,6 +42,9 @@ class SmartReminder(Star):
                     continue
                 
                 dt = datetime.datetime.strptime(reminder["datetime"], "%Y-%m-%d %H:%M")
+                
+                # 生成唯一的任务ID
+                job_id = f"reminder_{group}_{i}"
                 
                 # 根据重复类型设置不同的触发器
                 if reminder.get("repeat") == "daily":
@@ -51,7 +54,8 @@ class SmartReminder(Star):
                         args=[group, reminder],
                         hour=dt.hour,
                         minute=dt.minute,
-                        misfire_grace_time=60
+                        misfire_grace_time=60,
+                        id=job_id
                     )
                 elif reminder.get("repeat") == "weekly":
                     self.scheduler.add_job(
@@ -61,7 +65,8 @@ class SmartReminder(Star):
                         day_of_week=dt.weekday(),
                         hour=dt.hour,
                         minute=dt.minute,
-                        misfire_grace_time=60
+                        misfire_grace_time=60,
+                        id=job_id
                     )
                 elif reminder.get("repeat") == "monthly":
                     self.scheduler.add_job(
@@ -71,7 +76,8 @@ class SmartReminder(Star):
                         day=dt.day,
                         hour=dt.hour,
                         minute=dt.minute,
-                        misfire_grace_time=60
+                        misfire_grace_time=60,
+                        id=job_id
                     )
                 elif reminder.get("repeat") == "yearly":
                     self.scheduler.add_job(
@@ -82,7 +88,8 @@ class SmartReminder(Star):
                         day=dt.day,
                         hour=dt.hour,
                         minute=dt.minute,
-                        misfire_grace_time=60
+                        misfire_grace_time=60,
+                        id=job_id
                     )
                 else:
                     self.scheduler.add_job(
@@ -90,7 +97,8 @@ class SmartReminder(Star):
                         'date',
                         args=[group, reminder],
                         run_date=dt,
-                        misfire_grace_time=60
+                        misfire_grace_time=60,
+                        id=job_id
                     )
 
     def _is_outdated(self, reminder: dict):
@@ -146,7 +154,8 @@ class SmartReminder(Star):
                     args=[msg_origin, reminder],
                     hour=dt.hour,
                     minute=dt.minute,
-                    misfire_grace_time=60
+                    misfire_grace_time=60,
+                    id=f"reminder_{msg_origin}_{len(self.reminder_data[msg_origin])-1}"
                 )
             elif repeat == "weekly":
                 self.scheduler.add_job(
@@ -156,7 +165,8 @@ class SmartReminder(Star):
                     day_of_week=dt.weekday(),
                     hour=dt.hour,
                     minute=dt.minute,
-                    misfire_grace_time=60
+                    misfire_grace_time=60,
+                    id=f"reminder_{msg_origin}_{len(self.reminder_data[msg_origin])-1}"
                 )
             elif repeat == "monthly":
                 self.scheduler.add_job(
@@ -166,7 +176,8 @@ class SmartReminder(Star):
                     day=dt.day,
                     hour=dt.hour,
                     minute=dt.minute,
-                    misfire_grace_time=60
+                    misfire_grace_time=60,
+                    id=f"reminder_{msg_origin}_{len(self.reminder_data[msg_origin])-1}"
                 )
             elif repeat == "yearly":
                 self.scheduler.add_job(
@@ -177,7 +188,8 @@ class SmartReminder(Star):
                     day=dt.day,
                     hour=dt.hour,
                     minute=dt.minute,
-                    misfire_grace_time=60
+                    misfire_grace_time=60,
+                    id=f"reminder_{msg_origin}_{len(self.reminder_data[msg_origin])-1}"
                 )
             else:
                 self.scheduler.add_job(
@@ -185,7 +197,8 @@ class SmartReminder(Star):
                     'date',
                     args=[msg_origin, reminder],
                     run_date=dt,
-                    misfire_grace_time=60
+                    misfire_grace_time=60,
+                    id=f"reminder_{msg_origin}_{len(self.reminder_data[msg_origin])-1}"
                 )
             
             await self._save_data()
@@ -375,7 +388,8 @@ class SmartReminder(Star):
                     args=[msg_origin, reminder],
                     hour=dt.hour,
                     minute=dt.minute,
-                    misfire_grace_time=60
+                    misfire_grace_time=60,
+                    id=f"reminder_{msg_origin}_{len(self.reminder_data[msg_origin])-1}"
                 )
             elif repeat == "weekly":
                 self.scheduler.add_job(
@@ -385,7 +399,8 @@ class SmartReminder(Star):
                     day_of_week=dt.weekday(),  # 使用调整后的星期
                     hour=dt.hour,
                     minute=dt.minute,
-                    misfire_grace_time=60
+                    misfire_grace_time=60,
+                    id=f"reminder_{msg_origin}_{len(self.reminder_data[msg_origin])-1}"
                 )
             elif repeat == "monthly":
                 self.scheduler.add_job(
@@ -395,7 +410,8 @@ class SmartReminder(Star):
                     day=dt.day,
                     hour=dt.hour,
                     minute=dt.minute,
-                    misfire_grace_time=60
+                    misfire_grace_time=60,
+                    id=f"reminder_{msg_origin}_{len(self.reminder_data[msg_origin])-1}"
                 )
             elif repeat == "yearly":
                 self.scheduler.add_job(
@@ -406,7 +422,8 @@ class SmartReminder(Star):
                     day=dt.day,
                     hour=dt.hour,
                     minute=dt.minute,
-                    misfire_grace_time=60
+                    misfire_grace_time=60,
+                    id=f"reminder_{msg_origin}_{len(self.reminder_data[msg_origin])-1}"
                 )
             else:
                 self.scheduler.add_job(
@@ -414,7 +431,8 @@ class SmartReminder(Star):
                     'date',
                     args=[msg_origin, reminder],
                     run_date=dt,
-                    misfire_grace_time=60
+                    misfire_grace_time=60,
+                    id=f"reminder_{msg_origin}_{len(self.reminder_data[msg_origin])-1}"
                 )
             
             await self._save_data()
@@ -540,6 +558,11 @@ class SmartReminder(Star):
             else:
                 msg_origin = event.unified_msg_origin
             
+            # 调试信息：打印所有调度任务
+            logger.info("Current jobs in scheduler:")
+            for job in self.scheduler.get_jobs():
+                logger.info(f"Job ID: {job.id}, Next run: {job.next_run_time}, Args: {job.args}")
+            
             reminders = self.reminder_data.get(msg_origin, [])
             if not reminders:
                 return "当前没有任何任务。"
@@ -624,14 +647,29 @@ class SmartReminder(Star):
             deleted_reminders = []
             for i in sorted(to_delete, reverse=True):
                 reminder = reminders[i]
-                # 生成任务ID
-                job_id = f"reminder_{msg_origin}_{reminder['text']}_{reminder['datetime']}"
-                # 从调度器中删除任务
+                
+                # 调试信息：打印正在删除的任务
+                logger.info(f"Attempting to delete reminder: {reminder}")
+                
+                # 尝试删除调度任务
+                job_id = f"reminder_{msg_origin}_{i}"
                 try:
                     self.scheduler.remove_job(job_id)
+                    logger.info(f"Successfully removed job: {job_id}")
                 except JobLookupError:
-                    # 如果任务已经不存在，忽略错误
-                    pass
+                    logger.error(f"Job not found: {job_id}")
+                
+                # 以防万一，也检查其他可能的任务
+                for job in self.scheduler.get_jobs():
+                    if len(job.args) >= 2 and isinstance(job.args[1], dict):
+                        job_reminder = job.args[1]
+                        if (job_reminder.get('text') == reminder['text'] and 
+                            job_reminder.get('datetime') == reminder['datetime']):
+                            try:
+                                logger.info(f"Removing additional job: {job.id}")
+                                job.remove()
+                            except Exception as e:
+                                logger.error(f"Error removing additional job {job.id}: {str(e)}")
                 
                 deleted_reminders.append(reminder)
                 reminders.pop(i)
@@ -639,6 +677,11 @@ class SmartReminder(Star):
             # 更新数据
             self.reminder_data[msg_origin] = reminders
             await self._save_data()
+            
+            # 调试信息：打印剩余的调度任务
+            logger.info("Remaining jobs in scheduler:")
+            for job in self.scheduler.get_jobs():
+                logger.info(f"Job ID: {job.id}, Next run: {job.next_run_time}, Args: {job.args}")
             
             # 生成删除报告
             if len(deleted_reminders) == 1:
