@@ -514,5 +514,130 @@ class SmartReminder(Star):
                 raise e
             raise ValueError("时间格式错误，请使用 HH:MM 格式（如 8:05）或 HHMM 格式（如 0805）")
 
+    @filter.llm_tool(name="delete_reminder")
+    async def delete_reminder(self, event: Union[AstrMessageEvent, Context], 
+                            content: str = None,           # 任务内容关键词
+                            time: str = None,              # 具体时间点 HH:MM
+                            weekday: str = None,           # 星期 mon,tue,wed,thu,fri,sat,sun
+                            repeat_type: str = None,       # 重复类型 daily,weekly,monthly,yearly
+                            date: str = None,              # 具体日期 YYYY-MM-DD
+                            all: str = None                # 是否删除所有 "yes"/"no"
+                            ):
+        '''删除符合条件的提醒任务，可组合多个条件进行精确筛选
+        
+        Args:
+            content(string): 可选，任务内容包含的关键词
+            time(string): 可选，具体时间点，格式为 HH:MM，如 "08:00"
+            weekday(string): 可选，星期几，可选值：mon,tue,wed,thu,fri,sat,sun
+            repeat_type(string): 可选，重复类型，可选值：daily,weekly,monthly,yearly
+            date(string): 可选，具体日期，格式为 YYYY-MM-DD，如 "2024-02-09"
+            all(string): 可选，是否删除所有任务，可选值：yes/no，默认no
+        '''
+        try:
+            if isinstance(event, Context):
+                msg_origin = self.context.get_event_queue()._queue[0].session_id
+            else:
+                msg_origin = event.unified_msg_origin
+            
+            reminders = self.reminder_data.get(msg_origin, [])
+            if not reminders:
+                return "当前没有任何任务。"
+            
+            # 用于存储要删除的任务索引
+            to_delete = []
+            
+            # 验证星期格式
+            week_map = {
+                'mon': 0, 'tue': 1, 'wed': 2, 'thu': 3, 
+                'fri': 4, 'sat': 5, 'sun': 6
+            }
+            if weekday and weekday.lower() not in week_map:
+                return "星期格式错误，可选值：mon,tue,wed,thu,fri,sat,sun"
+            
+            # 验证重复类型
+            repeat_types = ["daily", "weekly", "monthly", "yearly"]
+            if repeat_type and repeat_type.lower() not in repeat_types:
+                return "重复类型错误，可选值：daily,weekly,monthly,yearly"
+            
+            for i, reminder in enumerate(reminders):
+                dt = datetime.datetime.strptime(reminder["datetime"], "%Y-%m-%d %H:%M")
+                
+                # 如果指定删除所有，直接添加
+                if all and all.lower() == "yes":
+                    to_delete.append(i)
+                    continue
+                
+                # 检查各个条件，所有指定的条件都必须满足
+                match = True
+                
+                # 检查内容
+                if content and content not in reminder["text"]:
+                    match = False
+                
+                # 检查时间点
+                if time:
+                    reminder_time = dt.strftime("%H:%M")
+                    if reminder_time != time:
+                        match = False
+                
+                # 检查星期
+                if weekday:
+                    if reminder.get("repeat") == "weekly":
+                        # 对于每周重复的任务，检查是否在指定星期执行
+                        if dt.weekday() != week_map[weekday.lower()]:
+                            match = False
+                    else:
+                        # 对于非每周重复的任务，检查日期是否落在指定星期
+                        if dt.weekday() != week_map[weekday.lower()]:
+                            match = False
+                
+                # 检查重复类型
+                if repeat_type and reminder.get("repeat") != repeat_type.lower():
+                    match = False
+                
+                # 检查具体日期
+                if date:
+                    reminder_date = dt.strftime("%Y-%m-%d")
+                    if reminder_date != date:
+                        match = False
+                
+                # 如果所有条件都满足，添加到删除列表
+                if match:
+                    to_delete.append(i)
+            
+            if not to_delete:
+                conditions = []
+                if content:
+                    conditions.append(f"内容包含{content}")
+                if time:
+                    conditions.append(f"时间为{time}")
+                if weekday:
+                    conditions.append(f"在{weekday}")
+                if repeat_type:
+                    conditions.append(f"重复类型为{repeat_type}")
+                if date:
+                    conditions.append(f"日期为{date}")
+                return f"没有找到符合条件的任务：{', '.join(conditions)}"
+            
+            # 从后往前删除，避免索引变化
+            deleted_reminders = []
+            for i in sorted(to_delete, reverse=True):
+                deleted_reminders.append(reminders[i])
+                reminders.pop(i)
+            
+            # 更新数据
+            self.reminder_data[msg_origin] = reminders
+            await self._save_data()
+            
+            # 生成删除报告
+            if len(deleted_reminders) == 1:
+                return f"已删除任务：{deleted_reminders[0]['text']}"
+            else:
+                tasks = "\n".join([f"- {r['text']}" for r in deleted_reminders])
+                return f"已删除以下 {len(deleted_reminders)} 个任务：\n{tasks}"
+            
+        except Exception as e:
+            return f"删除任务时出错：{str(e)}"
+
 
 
