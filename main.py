@@ -275,13 +275,23 @@ class SmartReminder(Star):
             
         provider = self.context.get_using_provider()
         if provider:
-            reminder_list = "\n".join([f"- {r['text']} (时间: {r['datetime']})" for r in reminders])
-            prompt = f"请帮我整理并展示以下任务列表，用自然的语言表达：\n{reminder_list}\n同时告诉用户可以使用/rmd rm <序号>或者直接命令自己来删除提醒。直接发出对话内容，就是你说的话，不要有其他的背景描述。"
-            response = await provider.text_chat(
-                prompt=prompt,
-                session_id=event.session_id
-            )
-            yield event.plain_result(response.completion_text)
+            try:
+                reminder_list = "\n".join([f"- {r['text']} (时间: {r['datetime']})" for r in reminders])
+                prompt = f"请帮我整理并展示以下任务列表，用自然的语言表达：\n{reminder_list}\n同时告诉用户可以使用/rmd rm <序号>或者直接命令自己来删除提醒。直接发出对话内容，就是你说的话，不要有其他的背景描述。"
+                response = await provider.text_chat(
+                    prompt=prompt,
+                    session_id=event.session_id,
+                    contexts=[]  # 确保contexts是一个空列表而不是None
+                )
+                yield event.plain_result(response.completion_text)
+            except Exception as e:
+                logger.error(f"在list_reminders中调用LLM时出错: {str(e)}")
+                # 如果LLM调用失败，回退到基本显示
+                reminder_str = "当前的任务：\n"
+                for i, reminder in enumerate(reminders):
+                    reminder_str += f"{i+1}. {reminder['text']} - {reminder['datetime']}\n"
+                reminder_str += "\n使用 /rmd rm <序号> 删除任务"
+                yield event.plain_result(reminder_str)
         else:
             reminder_str = "当前的任务：\n"
             for i, reminder in enumerate(reminders):
