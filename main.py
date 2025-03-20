@@ -109,16 +109,6 @@ class SmartReminder(Star):
 
     async def _save_data(self):
         '''保存提醒数据'''
-        # 在保存前清理过期的一次性任务
-        for group in list(self.reminder_data.keys()):
-            self.reminder_data[group] = [
-                r for r in self.reminder_data[group] 
-                if not (r.get("repeat", "none") == "none" and self._is_outdated(r))
-            ]
-            # 如果群组没有任何提醒了，删除这个群组的条目
-            if not self.reminder_data[group]:
-                del self.reminder_data[group]
-                
         with open(self.data_file, "w", encoding='utf-8') as f:
             json.dump(self.reminder_data, f, ensure_ascii=False)
 
@@ -269,17 +259,6 @@ class SmartReminder(Star):
             msg.chain.append(Plain(f"提醒: {reminder['text']}"))
             
             await self.context.send_message(unified_msg_origin, msg)
-            
-        # 如果是一次性任务（非重复任务），执行后从数据中删除
-        if reminder.get("repeat", "none") == "none":
-            if unified_msg_origin in self.reminder_data:
-                # 查找并删除这个提醒
-                for i, r in enumerate(self.reminder_data[unified_msg_origin]):
-                    if r == reminder:  # 比较整个字典
-                        self.reminder_data[unified_msg_origin].pop(i)
-                        logger.info(f"One-time reminder removed: {reminder['text']}")
-                        await self._save_data()
-                        break
 
     @command_group("rmd")
     def rmd(self):
