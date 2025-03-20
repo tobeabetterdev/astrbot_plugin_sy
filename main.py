@@ -109,6 +109,16 @@ class SmartReminder(Star):
 
     async def _save_data(self):
         '''保存提醒数据'''
+        # 在保存前清理过期的一次性任务
+        for group in list(self.reminder_data.keys()):
+            self.reminder_data[group] = [
+                r for r in self.reminder_data[group] 
+                if not (r.get("repeat", "none") == "none" and self._is_outdated(r))
+            ]
+            # 如果群组没有任何提醒了，删除这个群组的条目
+            if not self.reminder_data[group]:
+                del self.reminder_data[group]
+                
         with open(self.data_file, "w", encoding='utf-8') as f:
             json.dump(self.reminder_data, f, ensure_ascii=False)
 
@@ -226,7 +236,8 @@ class SmartReminder(Star):
             prompt = f"你现在在和{reminder['user_name']}对话，发出提醒给他，提醒内容是'{reminder['text']}'，如果提醒内容是要求你做事，比如讲故事，你就执行。直接发出对话内容，就是你说的话，不要有其他的背景描述。"
             response = await provider.text_chat(
                 prompt=prompt,
-                session_id=unified_msg_origin
+                session_id=unified_msg_origin,
+                contexts=[]  # 确保contexts是一个空列表而不是None
             )
             logger.info(f"Reminder Activated: {reminder['text']}, created by {unified_msg_origin}")
             
@@ -259,6 +270,17 @@ class SmartReminder(Star):
             msg.chain.append(Plain(f"提醒: {reminder['text']}"))
             
             await self.context.send_message(unified_msg_origin, msg)
+            
+        # 如果是一次性任务（非重复任务），执行后从数据中删除
+        if reminder.get("repeat", "none") == "none":
+            if unified_msg_origin in self.reminder_data:
+                # 查找并删除这个提醒
+                for i, r in enumerate(self.reminder_data[unified_msg_origin]):
+                    if r == reminder:  # 比较整个字典
+                        self.reminder_data[unified_msg_origin].pop(i)
+                        logger.info(f"One-time reminder removed: {reminder['text']}")
+                        await self._save_data()
+                        break
 
     @command_group("rmd")
     def rmd(self):
@@ -331,7 +353,8 @@ class SmartReminder(Star):
             prompt = f"用户删除了一个任务，内容是'{removed['text']}'。请用自然的语言确认删除操作。直接发出对话内容，就是你说的话，不要有其他的背景描述。"
             response = await provider.text_chat(
                 prompt=prompt,
-                session_id=event.session_id
+                session_id=event.session_id,
+                contexts=[]  # 确保contexts是一个空列表而不是None
             )
             yield event.plain_result(response.completion_text)
         else:
