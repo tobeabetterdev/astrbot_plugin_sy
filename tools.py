@@ -13,7 +13,7 @@ class ReminderTools:
         self.data_file = star_instance.data_file
         self.scheduler_manager = star_instance.scheduler_manager
     
-    async def set_reminder(self, event: Union[AstrMessageEvent, Context], text: str, datetime_str: str, user_name: str = "用户", repeat: str = None):
+    async def set_reminder(self, event: Union[AstrMessageEvent, Context], text: str, datetime_str: str, user_name: str = "用户", repeat: str = None, holiday_type: str = None):
         '''设置一个提醒
         
         Args:
@@ -21,24 +21,34 @@ class ReminderTools:
             datetime_str(string): 提醒时间，格式为 %Y-%m-%d %H:%M
             user_name(string): 提醒对象名称，默认为"用户"
             repeat(string): 重复类型，可选值：daily(每天)，weekly(每周)，monthly(每月)，yearly(每年)，none(不重复)
+            holiday_type(string): 可选，节假日类型：workday(仅工作日执行)，holiday(仅法定节假日执行)
         '''
         try:
             if isinstance(event, Context):
                 msg_origin = self.context.get_event_queue()._queue[0].session_id
                 creator_id = None  # Context 模式下无法获取创建者ID
+                creator_name = None
             else:
                 msg_origin = event.unified_msg_origin
                 creator_id = event.get_sender_id() if event.message_obj.group_id else None
+                # 获取创建者昵称
+                creator_name = event.message_obj.sender.nickname if hasattr(event.message_obj, 'sender') and hasattr(event.message_obj.sender, 'nickname') else None
             
             if msg_origin not in self.reminder_data:
                 self.reminder_data[msg_origin] = []
+            
+            # 处理重复类型和节假日类型的组合
+            final_repeat = repeat or "none"
+            if repeat and holiday_type:
+                final_repeat = f"{repeat}_{holiday_type}"
             
             reminder = {
                 "text": text,
                 "datetime": datetime_str,
                 "user_name": user_name,
-                "repeat": repeat or "none",
+                "repeat": final_repeat,
                 "creator_id": creator_id,
+                "creator_name": creator_name,  # 添加创建者昵称
                 "is_task": False  # 标记为提醒，不是任务
             }
             
@@ -52,46 +62,73 @@ class ReminderTools:
             
             await save_reminder_data(self.data_file, self.reminder_data)
             
+            # 构建提示信息
             repeat_str = ""
-            if repeat == "daily":
+            if repeat == "daily" and not holiday_type:
                 repeat_str = "，每天重复"
-            elif repeat == "weekly":
+            elif repeat == "daily" and holiday_type == "workday":
+                repeat_str = "，每个工作日重复（法定节假日不触发）"
+            elif repeat == "daily" and holiday_type == "holiday":
+                repeat_str = "，每个法定节假日重复"
+            elif repeat == "weekly" and not holiday_type:
                 repeat_str = "，每周重复"
-            elif repeat == "monthly":
+            elif repeat == "weekly" and holiday_type == "workday":
+                repeat_str = "，每周的这一天重复，但仅工作日触发"
+            elif repeat == "weekly" and holiday_type == "holiday":
+                repeat_str = "，每周的这一天重复，但仅法定节假日触发"
+            elif repeat == "monthly" and not holiday_type:
                 repeat_str = "，每月重复"
-            elif repeat == "yearly":
+            elif repeat == "monthly" and holiday_type == "workday":
+                repeat_str = "，每月的这一天重复，但仅工作日触发"
+            elif repeat == "monthly" and holiday_type == "holiday":
+                repeat_str = "，每月的这一天重复，但仅法定节假日触发"
+            elif repeat == "yearly" and not holiday_type:
                 repeat_str = "，每年重复"
+            elif repeat == "yearly" and holiday_type == "workday":
+                repeat_str = "，每年的这一天重复，但仅工作日触发"
+            elif repeat == "yearly" and holiday_type == "holiday":
+                repeat_str = "，每年的这一天重复，但仅法定节假日触发"
             
             return f"已设置提醒:\n内容: {text}\n时间: {datetime_str}{repeat_str}\n\n使用 /rmd ls 查看所有提醒"
             
         except Exception as e:
             return f"设置提醒时出错：{str(e)}"
     
-    async def set_task(self, event: Union[AstrMessageEvent, Context], text: str, datetime_str: str, repeat: str = None):
+    async def set_task(self, event: Union[AstrMessageEvent, Context], text: str, datetime_str: str, repeat: str = None, holiday_type: str = None):
         '''设置一个任务，到时间后会让AI执行该任务
         
         Args:
             text(string): 任务内容，AI将执行的操作
             datetime_str(string): 任务执行时间，格式为 %Y-%m-%d %H:%M
             repeat(string): 重复类型，可选值：daily(每天)，weekly(每周)，monthly(每月)，yearly(每年)，none(不重复)
+            holiday_type(string): 可选，节假日类型：workday(仅工作日执行)，holiday(仅法定节假日执行)
         '''
         try:
             if isinstance(event, Context):
                 msg_origin = self.context.get_event_queue()._queue[0].session_id
                 creator_id = None  # Context 模式下无法获取创建者ID
+                creator_name = None
             else:
                 msg_origin = event.unified_msg_origin
                 creator_id = event.get_sender_id() if event.message_obj.group_id else None
+                # 获取创建者昵称
+                creator_name = event.message_obj.sender.nickname if hasattr(event.message_obj, 'sender') and hasattr(event.message_obj.sender, 'nickname') else None
             
             if msg_origin not in self.reminder_data:
                 self.reminder_data[msg_origin] = []
+            
+            # 处理重复类型和节假日类型的组合
+            final_repeat = repeat or "none"
+            if repeat and holiday_type:
+                final_repeat = f"{repeat}_{holiday_type}"
             
             task = {
                 "text": text,
                 "datetime": datetime_str,
                 "user_name": "用户",  # 任务模式下不需要特别指定用户名
-                "repeat": repeat or "none",
+                "repeat": final_repeat,
                 "creator_id": creator_id,
+                "creator_name": creator_name,  # 添加创建者昵称
                 "is_task": True  # 标记为任务，不是提醒
             }
             
@@ -105,15 +142,32 @@ class ReminderTools:
             
             await save_reminder_data(self.data_file, self.reminder_data)
             
+            # 构建提示信息
             repeat_str = ""
-            if repeat == "daily":
+            if repeat == "daily" and not holiday_type:
                 repeat_str = "，每天重复"
-            elif repeat == "weekly":
+            elif repeat == "daily" and holiday_type == "workday":
+                repeat_str = "，每个工作日重复（法定节假日不触发）"
+            elif repeat == "daily" and holiday_type == "holiday":
+                repeat_str = "，每个法定节假日重复"
+            elif repeat == "weekly" and not holiday_type:
                 repeat_str = "，每周重复"
-            elif repeat == "monthly":
+            elif repeat == "weekly" and holiday_type == "workday":
+                repeat_str = "，每周的这一天重复，但仅工作日触发"
+            elif repeat == "weekly" and holiday_type == "holiday":
+                repeat_str = "，每周的这一天重复，但仅法定节假日触发"
+            elif repeat == "monthly" and not holiday_type:
                 repeat_str = "，每月重复"
-            elif repeat == "yearly":
+            elif repeat == "monthly" and holiday_type == "workday":
+                repeat_str = "，每月的这一天重复，但仅工作日触发"
+            elif repeat == "monthly" and holiday_type == "holiday":
+                repeat_str = "，每月的这一天重复，但仅法定节假日触发"
+            elif repeat == "yearly" and not holiday_type:
                 repeat_str = "，每年重复"
+            elif repeat == "yearly" and holiday_type == "workday":
+                repeat_str = "，每年的这一天重复，但仅工作日触发"
+            elif repeat == "yearly" and holiday_type == "holiday":
+                repeat_str = "，每年的这一天重复，但仅法定节假日触发"
             
             return f"已设置任务:\n内容: {text}\n时间: {datetime_str}{repeat_str}\n\n使用 /rmd ls 查看所有任务"
             

@@ -36,7 +36,7 @@ class SmartReminder(Star):
         self.tools = ReminderTools(self)
 
     @filter.llm_tool(name="set_reminder")
-    async def set_reminder(self, event, text: str, datetime_str: str, user_name: str = "用户", repeat: str = None):
+    async def set_reminder(self, event, text: str, datetime_str: str, user_name: str = "用户", repeat: str = None, holiday_type: str = None):
         '''设置一个提醒，到时间后会提醒用户
         
         Args:
@@ -44,19 +44,21 @@ class SmartReminder(Star):
             datetime_str(string): 提醒时间，格式为 %Y-%m-%d %H:%M
             user_name(string): 提醒对象名称，默认为"用户"
             repeat(string): 重复类型，可选值：daily(每天)，weekly(每周)，monthly(每月)，yearly(每年)，none(不重复)
+            holiday_type(string): 可选，节假日类型：workday(仅工作日执行)，holiday(仅法定节假日执行)
         '''
-        return await self.tools.set_reminder(event, text, datetime_str, user_name, repeat)
+        return await self.tools.set_reminder(event, text, datetime_str, user_name, repeat, holiday_type)
 
     @filter.llm_tool(name="set_task")
-    async def set_task(self, event, text: str, datetime_str: str, repeat: str = None):
+    async def set_task(self, event, text: str, datetime_str: str, repeat: str = None, holiday_type: str = None):
         '''设置一个任务，到时间后会让AI执行该任务
         
         Args:
             text(string): 任务内容，AI将执行的操作，如果是调用其他llm函数，请告诉ai（比如，请调用llm函数，内容是...）
             datetime_str(string): 任务执行时间，格式为 %Y-%m-%d %H:%M
             repeat(string): 重复类型，可选值：daily(每天)，weekly(每周)，monthly(每月)，yearly(每年)，none(不重复)
+            holiday_type(string): 可选，节假日类型：workday(仅工作日执行)，holiday(仅法定节假日执行)
         '''
-        return await self.tools.set_task(event, text, datetime_str, repeat)
+        return await self.tools.set_task(event, text, datetime_str, repeat, holiday_type)
 
     @filter.llm_tool(name="delete_reminder")
     async def delete_reminder(self, event, 
@@ -234,7 +236,7 @@ class SmartReminder(Star):
             yield event.plain_result(f"已删除{item_type}：{removed['text']}")
 
     @rmd.command("add")
-    async def add_reminder(self, event: AstrMessageEvent, text: str, time_str: str, week: str = None, repeat: str = None, is_task: bool = False):
+    async def add_reminder(self, event: AstrMessageEvent, text: str, time_str: str, week: str = None, repeat: str = None, is_task: bool = False, holiday_type: str = None):
         '''手动添加提醒或任务
         
         Args:
@@ -243,6 +245,7 @@ class SmartReminder(Star):
             week(string): 可选，开始星期：mon,tue,wed,thu,fri,sat,sun
             repeat(string): 可选，重复类型：daily,weekly,monthly,yearly
             is_task(bool): 可选，是否为任务，默认为False（提醒）
+            holiday_type(string): 可选，节假日类型：workday(仅工作日执行)，holiday(仅法定节假日执行)
         '''
         try:
             # 解析时间
@@ -267,9 +270,17 @@ class SmartReminder(Star):
             if repeat and repeat.lower() not in repeat_types:
                 yield event.plain_result("重复类型错误，可选值：daily,weekly,monthly,yearly")
                 return
+                
+            # 验证节假日类型
+            holiday_types = ["workday", "holiday"]
+            if holiday_type and holiday_type.lower() not in holiday_types:
+                yield event.plain_result("节假日类型错误，可选值：workday(仅工作日执行)，holiday(仅法定节假日执行)")
+                return
 
             msg_origin = event.unified_msg_origin
             creator_id = event.get_sender_id()
+            # 获取创建者昵称
+            creator_name = event.message_obj.sender.nickname if hasattr(event.message_obj, 'sender') and hasattr(event.message_obj.sender, 'nickname') else None
             
             if msg_origin not in self.reminder_data:
                 self.reminder_data[msg_origin] = []
@@ -285,12 +296,18 @@ class SmartReminder(Star):
                     days_ahead += 7
                 dt += datetime.timedelta(days=days_ahead)
             
+            # 处理重复类型和节假日类型的组合
+            final_repeat = repeat.lower() if repeat else "none"
+            if repeat and holiday_type:
+                final_repeat = f"{repeat.lower()}_{holiday_type.lower()}"
+            
             item = {
                 "text": text,
                 "datetime": dt.strftime("%Y-%m-%d %H:%M"),
                 "user_name": "用户" if is_task else creator_id,
-                "repeat": repeat.lower() if repeat else "none",
+                "repeat": final_repeat,
                 "creator_id": creator_id,
+                "creator_name": creator_name,  # 添加创建者昵称
                 "is_task": is_task
             }
             
@@ -305,16 +322,32 @@ class SmartReminder(Star):
             week_names = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
             start_str = f"从{week_names[dt.weekday()]}开始，" if week else ""
             
-            if repeat == "daily":
+            # 根据重复类型和节假日类型生成文本说明
+            repeat_str = "一次性"
+            if repeat == "daily" and not holiday_type:
                 repeat_str = "每天重复"
-            elif repeat == "weekly":
+            elif repeat == "daily" and holiday_type == "workday":
+                repeat_str = "每个工作日重复（法定节假日不触发）"
+            elif repeat == "daily" and holiday_type == "holiday":
+                repeat_str = "每个法定节假日重复"
+            elif repeat == "weekly" and not holiday_type:
                 repeat_str = "每周重复"
-            elif repeat == "monthly":
+            elif repeat == "weekly" and holiday_type == "workday":
+                repeat_str = "每周的这一天重复，但仅工作日触发"
+            elif repeat == "weekly" and holiday_type == "holiday":
+                repeat_str = "每周的这一天重复，但仅法定节假日触发"
+            elif repeat == "monthly" and not holiday_type:
                 repeat_str = "每月重复"
-            elif repeat == "yearly":
+            elif repeat == "monthly" and holiday_type == "workday":
+                repeat_str = "每月的这一天重复，但仅工作日触发"
+            elif repeat == "monthly" and holiday_type == "holiday":
+                repeat_str = "每月的这一天重复，但仅法定节假日触发"
+            elif repeat == "yearly" and not holiday_type:
                 repeat_str = "每年重复"
-            else:
-                repeat_str = "一次性"
+            elif repeat == "yearly" and holiday_type == "workday":
+                repeat_str = "每年的这一天重复，但仅工作日触发"
+            elif repeat == "yearly" and holiday_type == "holiday":
+                repeat_str = "每年的这一天重复，但仅法定节假日触发"
             
             item_type = "任务" if is_task else "提醒"
             yield event.plain_result(f"已设置{item_type}:\n内容: {text}\n时间: {dt.strftime('%Y-%m-%d %H:%M')}\n{start_str}{repeat_str}\n\n使用 /rmd ls 查看所有提醒和任务")
@@ -323,7 +356,7 @@ class SmartReminder(Star):
             yield event.plain_result(f"设置提醒或任务时出错：{str(e)}")
 
     @rmd.command("task")
-    async def add_task(self, event: AstrMessageEvent, text: str, time_str: str, week: str = None, repeat: str = None):
+    async def add_task(self, event: AstrMessageEvent, text: str, time_str: str, week: str = None, repeat: str = None, holiday_type: str = None):
         '''手动添加任务
         
         Args:
@@ -331,9 +364,10 @@ class SmartReminder(Star):
             time_str(string): 时间，格式为 HH:MM 或 HHMM
             week(string): 可选，开始星期：mon,tue,wed,thu,fri,sat,sun
             repeat(string): 可选，重复类型：daily,weekly,monthly,yearly
+            holiday_type(string): 可选，节假日类型：workday(仅工作日执行)，holiday(仅法定节假日执行)
         '''
         # 调用add_reminder方法，但设置is_task为True
-        async for result in self.add_reminder(event, text, time_str, week, repeat, True):
+        async for result in self.add_reminder(event, text, time_str, week, repeat, True, holiday_type):
             yield result
 
     @rmd.command("help")
@@ -345,18 +379,21 @@ class SmartReminder(Star):
 【任务】：到时间后AI会自动执行指定的操作
 
 1. 添加提醒：
-   /rmd add <内容> <时间> [开始星期] [重复类型]
+   /rmd add <内容> <时间> [开始星期] [重复类型] [--is_task] [--holiday_type=...]
    例如：
    - /rmd add 写周报 8:05
    - /rmd add 吃饭 8:05 sun daily (从周日开始每天)
    - /rmd add 开会 8:05 mon weekly (每周一)
    - /rmd add 交房租 8:05 fri monthly (从周五开始每月)
+   - /rmd add 上班打卡 8:30 daily workday (每个工作日，法定节假日不触发)
+   - /rmd add 休息提醒 9:00 daily holiday (每个法定节假日触发)
 
 2. 添加任务：
-   /rmd task <内容> <时间> [开始星期] [重复类型]
+   /rmd task <内容> <时间> [开始星期] [重复类型] [--holiday_type=...]
    例如：
    - /rmd task 发送天气预报 8:00
    - /rmd task 汇总今日新闻 18:00 daily
+   - /rmd task 推送工作安排 9:00 mon weekly workday (每周一工作日推送)
 
 3. 查看提醒和任务：
    /rmd ls - 列出所有提醒和任务
@@ -379,8 +416,13 @@ class SmartReminder(Star):
    - monthly: 每月重复
    - yearly: 每年重复
 
-7. AI智能提醒与任务
+7. 节假日类型：
+   - workday: 仅工作日触发（法定节假日不触发）
+   - holiday: 仅法定节假日触发
+
+8. AI智能提醒与任务
    正常对话即可，AI会自己设置提醒或任务，但需要AI支持LLM
 
-注：时间格式为 HH:MM 或 HHMM，如 8:05 或 0805"""
+注：时间格式为 HH:MM 或 HHMM，如 8:05 或 0805
+法定节假日数据来源：http://timor.tech/api/holiday"""
         yield event.plain_result(help_text)

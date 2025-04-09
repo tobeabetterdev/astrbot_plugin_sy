@@ -1,6 +1,7 @@
 import datetime
 import json
 import os
+import aiohttp
 from astrbot.api import logger
 
 def parse_datetime(datetime_str: str) -> str:
@@ -67,4 +68,152 @@ async def save_reminder_data(data_file: str, reminder_data: dict):
             del reminder_data[group]
             
     with open(data_file, "w", encoding='utf-8') as f:
-        json.dump(reminder_data, f, ensure_ascii=False) 
+        json.dump(reminder_data, f, ensure_ascii=False)
+
+# 法定节假日相关功能
+class HolidayManager:
+    def __init__(self):
+        # 确保目录存在
+        data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data")
+        os.makedirs(os.path.join(data_dir, "holiday_data"), exist_ok=True)
+        self.holiday_cache_file = os.path.join(data_dir, "holiday_data", "holiday_cache.json")
+        self.holiday_data = self._load_holiday_data()
+        
+    def _load_holiday_data(self) -> dict:
+        """加载节假日数据缓存"""
+        if not os.path.exists(self.holiday_cache_file):
+            return {}
+        
+        try:
+            with open(self.holiday_cache_file, "r", encoding='utf-8') as f:
+                data = json.load(f)
+                
+            # 检查数据是否过期（缓存超过30天更新一次）
+            if "last_update" in data:
+                last_update = datetime.datetime.fromisoformat(data["last_update"])
+                now = datetime.datetime.now()
+                if (now - last_update).days > 30:
+                    logger.info("节假日数据缓存已过期，需要更新")
+                    return {}
+                    
+            return data
+        except Exception as e:
+            logger.error(f"加载节假日数据缓存失败: {e}")
+            return {}
+    
+    async def _save_holiday_data(self):
+        """保存节假日数据缓存"""
+        try:
+            # 添加最后更新时间
+            self.holiday_data["last_update"] = datetime.datetime.now().isoformat()
+            
+            with open(self.holiday_cache_file, "w", encoding='utf-8') as f:
+                json.dump(self.holiday_data, f, ensure_ascii=False)
+        except Exception as e:
+            logger.error(f"保存节假日数据缓存失败: {e}")
+            
+    async def fetch_holiday_data(self, year: int = None) -> dict:
+        """获取指定年份的节假日数据
+        
+        Args:
+            year: 年份，默认为当前年份
+            
+        Returns:
+            dict: 节假日数据，格式为 {日期字符串: 类型}
+                  类型说明: 0-工作日, 1-法定节假日, 2-节假日调休补班
+        """
+        if year is None:
+            year = datetime.datetime.now().year
+            
+        # 如果缓存中已有数据则直接返回
+        year_key = str(year)
+        if year_key in self.holiday_data and "data" in self.holiday_data[year_key]:
+            return self.holiday_data[year_key]["data"]
+            
+        # 否则从API获取
+        try:
+            # 使用 http://timor.tech/api/holiday/year/{year} 接口获取数据
+            url = f"http://timor.tech/api/holiday/year/{year}"
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as response:
+                    if response.status != 200:
+                        logger.error(f"获取节假日数据失败，状态码: {response.status}")
+                        return {}
+                        
+                    json_data = await response.json()
+                    
+                    if json_data.get("code") != 0:
+                        logger.error(f"获取节假日数据失败: {json_data.get('msg')}")
+                        return {}
+                    
+                    holiday_data = {}
+                    for date_str, info in json_data.get("holiday", {}).items():
+                        holiday_data[date_str] = info.get("holiday")
+                    
+                    # 缓存数据
+                    if year_key not in self.holiday_data:
+                        self.holiday_data[year_key] = {}
+                    self.holiday_data[year_key]["data"] = holiday_data
+                    await self._save_holiday_data()
+                    
+                    return holiday_data
+        except Exception as e:
+            logger.error(f"获取节假日数据出错: {e}")
+            return {}
+    
+    async def is_holiday(self, date: datetime.datetime = None) -> bool:
+        """判断指定日期是否为法定节假日
+        
+        Args:
+            date: 日期，默认为当天
+            
+        Returns:
+            bool: 是否为法定节假日
+        """
+        if date is None:
+            date = datetime.datetime.now()
+            
+        year = date.year
+        date_str = date.strftime("%Y-%m-%d")
+        
+        # 获取该年份的节假日数据
+        holiday_data = await self.fetch_holiday_data(year)
+        
+        # 判断是否为法定节假日（类型为1）
+        if date_str in holiday_data:
+            return holiday_data[date_str] == 1
+            
+        # 如果不在特殊日期列表中，则根据是否为周末判断
+        if date.weekday() >= 5:  # 5和6分别是周六和周日
+            return True
+            
+        return False
+    
+    async def is_workday(self, date: datetime.datetime = None) -> bool:
+        """判断指定日期是否为工作日
+        
+        Args:
+            date: 日期，默认为当天
+            
+        Returns:
+            bool: 是否为工作日
+        """
+        if date is None:
+            date = datetime.datetime.now()
+            
+        year = date.year
+        date_str = date.strftime("%Y-%m-%d")
+        
+        # 获取该年份的节假日数据
+        holiday_data = await self.fetch_holiday_data(year)
+        
+        # 判断是否为节假日补班（类型为2）
+        if date_str in holiday_data:
+            return holiday_data[date_str] == 2
+            
+        # 如果是周末且不是节假日补班，则不是工作日
+        if date.weekday() >= 5:  # 5和6分别是周六和周日
+            return False
+            
+        # 如果不是周末，且不是法定节假日，则是工作日
+        return date_str not in holiday_data or holiday_data[date_str] == 0 

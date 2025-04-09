@@ -4,7 +4,7 @@ from apscheduler.schedulers.base import JobLookupError
 from astrbot.api import logger
 from astrbot.api.event import MessageChain
 from astrbot.api.message_components import At, Plain
-from .utils import is_outdated, save_reminder_data
+from .utils import is_outdated, save_reminder_data, HolidayManager
 
 class ReminderScheduler:
     def __init__(self, context, reminder_data, data_file):
@@ -12,6 +12,7 @@ class ReminderScheduler:
         self.reminder_data = reminder_data
         self.data_file = data_file
         self.scheduler = AsyncIOScheduler()
+        self.holiday_manager = HolidayManager()  # 创建节假日管理器
         self._init_scheduler()
         self.scheduler.start()
     
@@ -41,6 +42,29 @@ class ReminderScheduler:
                         misfire_grace_time=60,
                         id=job_id
                     )
+                elif reminder.get("repeat") == "daily_workday":
+                    # 每个工作日重复
+                    self.scheduler.add_job(
+                        self._check_and_execute_workday,
+                        'cron',
+                        args=[group, reminder],
+                        hour=dt.hour,
+                        minute=dt.minute,
+                        day_of_week='mon-fri',  # 先按周一到周五执行，后续再判断法定节假日
+                        misfire_grace_time=60,
+                        id=job_id
+                    )
+                elif reminder.get("repeat") == "daily_holiday":
+                    # 每个法定节假日重复
+                    self.scheduler.add_job(
+                        self._check_and_execute_holiday,
+                        'cron',
+                        args=[group, reminder],
+                        hour=dt.hour,
+                        minute=dt.minute,
+                        misfire_grace_time=60,
+                        id=job_id
+                    )
                 elif reminder.get("repeat") == "weekly":
                     self.scheduler.add_job(
                         self._reminder_callback,
@@ -52,9 +76,57 @@ class ReminderScheduler:
                         misfire_grace_time=60,
                         id=job_id
                     )
+                elif reminder.get("repeat") == "weekly_workday":
+                    # 每周的这一天，但仅工作日执行
+                    self.scheduler.add_job(
+                        self._check_and_execute_workday,
+                        'cron',
+                        args=[group, reminder],
+                        day_of_week=dt.weekday(),
+                        hour=dt.hour,
+                        minute=dt.minute,
+                        misfire_grace_time=60,
+                        id=job_id
+                    )
+                elif reminder.get("repeat") == "weekly_holiday":
+                    # 每周的这一天，但仅法定节假日执行
+                    self.scheduler.add_job(
+                        self._check_and_execute_holiday,
+                        'cron',
+                        args=[group, reminder],
+                        day_of_week=dt.weekday(),
+                        hour=dt.hour,
+                        minute=dt.minute,
+                        misfire_grace_time=60,
+                        id=job_id
+                    )
                 elif reminder.get("repeat") == "monthly":
                     self.scheduler.add_job(
                         self._reminder_callback,
+                        'cron',
+                        args=[group, reminder],
+                        day=dt.day,
+                        hour=dt.hour,
+                        minute=dt.minute,
+                        misfire_grace_time=60,
+                        id=job_id
+                    )
+                elif reminder.get("repeat") == "monthly_workday":
+                    # 每月的这一天，但仅工作日执行
+                    self.scheduler.add_job(
+                        self._check_and_execute_workday,
+                        'cron',
+                        args=[group, reminder],
+                        day=dt.day,
+                        hour=dt.hour,
+                        minute=dt.minute,
+                        misfire_grace_time=60,
+                        id=job_id
+                    )
+                elif reminder.get("repeat") == "monthly_holiday":
+                    # 每月的这一天，但仅法定节假日执行
+                    self.scheduler.add_job(
+                        self._check_and_execute_holiday,
                         'cron',
                         args=[group, reminder],
                         day=dt.day,
@@ -75,6 +147,32 @@ class ReminderScheduler:
                         misfire_grace_time=60,
                         id=job_id
                     )
+                elif reminder.get("repeat") == "yearly_workday":
+                    # 每年的这一天，但仅工作日执行
+                    self.scheduler.add_job(
+                        self._check_and_execute_workday,
+                        'cron',
+                        args=[group, reminder],
+                        month=dt.month,
+                        day=dt.day,
+                        hour=dt.hour,
+                        minute=dt.minute,
+                        misfire_grace_time=60,
+                        id=job_id
+                    )
+                elif reminder.get("repeat") == "yearly_holiday":
+                    # 每年的这一天，但仅法定节假日执行
+                    self.scheduler.add_job(
+                        self._check_and_execute_holiday,
+                        'cron',
+                        args=[group, reminder],
+                        month=dt.month,
+                        day=dt.day,
+                        hour=dt.hour,
+                        minute=dt.minute,
+                        misfire_grace_time=60,
+                        id=job_id
+                    )
                 else:
                     self.scheduler.add_job(
                         self._reminder_callback,
@@ -84,6 +182,28 @@ class ReminderScheduler:
                         misfire_grace_time=60,
                         id=job_id
                     )
+    
+    async def _check_and_execute_workday(self, unified_msg_origin: str, reminder: dict):
+        '''检查当天是否为工作日，如果是则执行提醒'''
+        today = datetime.datetime.now()
+        is_workday = await self.holiday_manager.is_workday(today)
+        
+        if is_workday:
+            # 如果是工作日则执行提醒
+            await self._reminder_callback(unified_msg_origin, reminder)
+        else:
+            logger.info(f"今天不是工作日，跳过执行提醒: {reminder['text']}")
+    
+    async def _check_and_execute_holiday(self, unified_msg_origin: str, reminder: dict):
+        '''检查当天是否为法定节假日，如果是则执行提醒'''
+        today = datetime.datetime.now()
+        is_holiday = await self.holiday_manager.is_holiday(today)
+        
+        if is_holiday:
+            # 如果是法定节假日则执行提醒
+            await self._reminder_callback(unified_msg_origin, reminder)
+        else:
+            logger.info(f"今天不是法定节假日，跳过执行提醒: {reminder['text']}")
     
     async def _reminder_callback(self, unified_msg_origin: str, reminder: dict):
         '''提醒回调函数'''
@@ -137,6 +257,13 @@ class ReminderScheduler:
                 if "creator_id" in reminder and reminder["creator_id"]:
                     if ":" in unified_msg_origin and unified_msg_origin.startswith("aiocqhttp"):
                         msg.chain.append(At(qq=reminder["creator_id"]))  # QQ平台
+                    elif ":" in unified_msg_origin and unified_msg_origin.startswith("gewechat"):
+                        # 微信平台 - 使用用户名/昵称而不是ID
+                        if "creator_name" in reminder and reminder["creator_name"]:
+                            msg.chain.append(At(qq=reminder["creator_id"], name=reminder["creator_name"]))
+                        else:
+                            # 如果没有保存用户名，尝试使用ID
+                            msg.chain.append(At(qq=reminder["creator_id"]))
                     else:
                         # 其他平台的@实现
                         msg.chain.append(Plain(f"@{reminder['creator_id']} "))
@@ -153,6 +280,13 @@ class ReminderScheduler:
             if "creator_id" in reminder and reminder["creator_id"]:
                 if ":" in unified_msg_origin and unified_msg_origin.startswith("aiocqhttp"):
                     msg.chain.append(At(qq=reminder["creator_id"]))  # QQ平台
+                elif ":" in unified_msg_origin and unified_msg_origin.startswith("gewechat"):
+                    # 微信平台 - 使用用户名/昵称而不是ID
+                    if "creator_name" in reminder and reminder["creator_name"]:
+                        msg.chain.append(At(qq=reminder["creator_id"], name=reminder["creator_name"]))
+                    else:
+                        # 如果没有保存用户名，尝试使用ID
+                        msg.chain.append(At(qq=reminder["creator_id"]))
                 else:
                     # 其他平台的@实现
                     msg.chain.append(Plain(f"@{reminder['creator_id']} "))
@@ -189,9 +323,56 @@ class ReminderScheduler:
                 misfire_grace_time=60,
                 id=job_id
             )
+        elif reminder.get("repeat") == "daily_workday":
+            # 每个工作日重复
+            self.scheduler.add_job(
+                self._check_and_execute_workday,
+                'cron',
+                args=[msg_origin, reminder],
+                hour=dt.hour,
+                minute=dt.minute,
+                day_of_week='mon-fri',  # 先按周一到周五执行，后续再判断法定节假日
+                misfire_grace_time=60,
+                id=job_id
+            )
+        elif reminder.get("repeat") == "daily_holiday":
+            # 每个法定节假日重复
+            self.scheduler.add_job(
+                self._check_and_execute_holiday,
+                'cron',
+                args=[msg_origin, reminder],
+                hour=dt.hour,
+                minute=dt.minute,
+                misfire_grace_time=60,
+                id=job_id
+            )
         elif reminder.get("repeat") == "weekly":
             self.scheduler.add_job(
                 self._reminder_callback,
+                'cron',
+                args=[msg_origin, reminder],
+                day_of_week=dt.weekday(),
+                hour=dt.hour,
+                minute=dt.minute,
+                misfire_grace_time=60,
+                id=job_id
+            )
+        elif reminder.get("repeat") == "weekly_workday":
+            # 每周的这一天，但仅工作日执行
+            self.scheduler.add_job(
+                self._check_and_execute_workday,
+                'cron',
+                args=[msg_origin, reminder],
+                day_of_week=dt.weekday(),
+                hour=dt.hour,
+                minute=dt.minute,
+                misfire_grace_time=60,
+                id=job_id
+            )
+        elif reminder.get("repeat") == "weekly_holiday":
+            # 每周的这一天，但仅法定节假日执行
+            self.scheduler.add_job(
+                self._check_and_execute_holiday,
                 'cron',
                 args=[msg_origin, reminder],
                 day_of_week=dt.weekday(),
@@ -211,9 +392,59 @@ class ReminderScheduler:
                 misfire_grace_time=60,
                 id=job_id
             )
+        elif reminder.get("repeat") == "monthly_workday":
+            # 每月的这一天，但仅工作日执行
+            self.scheduler.add_job(
+                self._check_and_execute_workday,
+                'cron',
+                args=[msg_origin, reminder],
+                day=dt.day,
+                hour=dt.hour,
+                minute=dt.minute,
+                misfire_grace_time=60,
+                id=job_id
+            )
+        elif reminder.get("repeat") == "monthly_holiday":
+            # 每月的这一天，但仅法定节假日执行
+            self.scheduler.add_job(
+                self._check_and_execute_holiday,
+                'cron',
+                args=[msg_origin, reminder],
+                day=dt.day,
+                hour=dt.hour,
+                minute=dt.minute,
+                misfire_grace_time=60,
+                id=job_id
+            )
         elif reminder.get("repeat") == "yearly":
             self.scheduler.add_job(
                 self._reminder_callback,
+                'cron',
+                args=[msg_origin, reminder],
+                month=dt.month,
+                day=dt.day,
+                hour=dt.hour,
+                minute=dt.minute,
+                misfire_grace_time=60,
+                id=job_id
+            )
+        elif reminder.get("repeat") == "yearly_workday":
+            # 每年的这一天，但仅工作日执行
+            self.scheduler.add_job(
+                self._check_and_execute_workday,
+                'cron',
+                args=[msg_origin, reminder],
+                month=dt.month,
+                day=dt.day,
+                hour=dt.hour,
+                minute=dt.minute,
+                misfire_grace_time=60,
+                id=job_id
+            )
+        elif reminder.get("repeat") == "yearly_holiday":
+            # 每年的这一天，但仅法定节假日执行
+            self.scheduler.add_job(
+                self._check_and_execute_holiday,
                 'cron',
                 args=[msg_origin, reminder],
                 month=dt.month,
