@@ -15,7 +15,7 @@ from .utils import load_reminder_data, parse_datetime, save_reminder_data, is_ou
 from .scheduler import ReminderScheduler
 from .tools import ReminderTools
 
-@register("ai_reminder", "kjqwdw", "智能定时任务，输入/rmd help查看帮助", "1.0.6")
+@register("ai_reminder", "kjqwdw", "智能定时任务，输入/rmd help查看帮助", "1.0.5")
 class SmartReminder(Star):
     def __init__(self, context: Context):
         super().__init__(context)
@@ -68,8 +68,7 @@ class SmartReminder(Star):
                             repeat_type: str = None,       # 重复类型 daily,weekly,monthly,yearly
                             date: str = None,              # 具体日期 YYYY-MM-DD
                             all: str = None,               # 是否删除所有 "yes"/"no"
-                            task_only: str = "no",         # 是否只删除任务 "yes"/"no"
-                            index: str = None              # 提醒的序号，从1开始，字符串形式
+                            task_only: str = "no"          # 是否只删除任务 "yes"/"no"
                             ):
         '''删除符合条件的提醒，可组合多个条件进行精确筛选
         
@@ -81,24 +80,7 @@ class SmartReminder(Star):
             date(string): 可选，具体日期，格式为 YYYY-MM-DD，如 "2024-02-09"
             all(string): 可选，是否删除所有提醒，可选值：yes/no，默认no
             task_only(string): 可选，是否只删除任务，可选值：yes/no，默认no
-            index(string): 可选，提醒的序号，从1开始，字符串形式如"1"
         '''
-        # 如果指定了序号，直接调用remove_reminder
-        if index is not None:
-            try:
-                idx = int(index)
-                # 创建一个临时生成器收集结果
-                results = []
-                async for result in self.remove_reminder(event, idx):
-                    results.append(result)
-                if results:
-                    return results[0].message
-                return "删除失败，可能序号无效。"
-            except Exception as e:
-                logger.error(f"通过序号删除提醒出错: {e}")
-                return f"删除提醒出错: {str(e)}"
-        
-        # 原有逻辑
         is_task_only = task_only and task_only.lower() == "yes"
         return await self.tools.delete_reminder(event, content, time, weekday, repeat_type, date, all, is_task_only, False)
 
@@ -109,8 +91,7 @@ class SmartReminder(Star):
                         weekday: str = None,           # 星期 mon,tue,wed,thu,fri,sat,sun
                         repeat_type: str = None,       # 重复类型 daily,weekly,monthly,yearly
                         date: str = None,              # 具体日期 YYYY-MM-DD
-                        all: str = None,               # 是否删除所有 "yes"/"no"
-                        index: str = None              # 任务的序号，从1开始，字符串形式
+                        all: str = None                # 是否删除所有 "yes"/"no"
                         ):
         '''删除符合条件的任务，可组合多个条件进行精确筛选
         
@@ -121,24 +102,7 @@ class SmartReminder(Star):
             repeat_type(string): 可选，重复类型，可选值：daily,weekly,monthly,yearly
             date(string): 可选，具体日期，格式为 YYYY-MM-DD，如 "2024-02-09"
             all(string): 可选，是否删除所有任务，可选值：yes/no，默认no
-            index(string): 可选，任务的序号，从1开始，字符串形式如"1"
         '''
-        # 如果指定了序号，直接调用remove_reminder
-        if index is not None:
-            try:
-                idx = int(index)
-                # 创建一个临时生成器收集结果
-                results = []
-                async for result in self.remove_reminder(event, idx):
-                    results.append(result)
-                if results:
-                    return results[0].message
-                return "删除失败，可能序号无效。"
-            except Exception as e:
-                logger.error(f"通过序号删除任务出错: {e}")
-                return f"删除任务出错: {str(e)}"
-        
-        # 原有逻辑
         return await self.tools.delete_reminder(event, content, time, weekday, repeat_type, date, all, "yes", "no")
         
     # 命令组必须定义在主类中
