@@ -23,10 +23,26 @@ class ReminderScheduler:
                 if "datetime" not in reminder:
                     continue
                 
-                if reminder.get("repeat", "none") == "none" and is_outdated(reminder):
+                # 处理不完整的时间格式问题
+                datetime_str = reminder["datetime"]
+                try:
+                    if ":" in datetime_str and len(datetime_str.split(":")) == 2 and "-" not in datetime_str:
+                        # 处理只有时分格式的时间（如"14:50"）
+                        today = datetime.datetime.now()
+                        hour, minute = map(int, datetime_str.split(":"))
+                        dt = today.replace(hour=hour, minute=minute)
+                        if dt < today:  # 如果时间已过，设置为明天
+                            dt += datetime.timedelta(days=1)
+                        # 更新reminder中的datetime为完整格式
+                        reminder["datetime"] = dt.strftime("%Y-%m-%d %H:%M")
+                        self.reminder_data[group][i] = reminder
+                    dt = datetime.datetime.strptime(reminder["datetime"], "%Y-%m-%d %H:%M")
+                except ValueError as e:
+                    logger.error(f"无法解析时间格式 '{reminder['datetime']}': {str(e)}，跳过此提醒")
                     continue
                 
-                dt = datetime.datetime.strptime(reminder["datetime"], "%Y-%m-%d %H:%M")
+                if reminder.get("repeat", "none") == "none" and is_outdated(reminder):
+                    continue
                 
                 # 生成唯一的任务ID
                 job_id = f"reminder_{group}_{i}"
