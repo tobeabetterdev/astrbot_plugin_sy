@@ -69,7 +69,7 @@ class SmartReminder(Star):
                             date: str = None,              # 具体日期 YYYY-MM-DD
                             all: str = None,               # 是否删除所有 "yes"/"no"
                             task_only: str = "no",         # 是否只删除任务 "yes"/"no"
-                            index: int = None              # 提醒的序号，从1开始
+                            index: str = None              # 提醒的序号，从1开始，字符串形式
                             ):
         '''删除符合条件的提醒，可组合多个条件进行精确筛选
         
@@ -81,7 +81,7 @@ class SmartReminder(Star):
             date(string): 可选，具体日期，格式为 YYYY-MM-DD，如 "2024-02-09"
             all(string): 可选，是否删除所有提醒，可选值：yes/no，默认no
             task_only(string): 可选，是否只删除任务，可选值：yes/no，默认no
-            index(int): 可选，提醒的序号，从1开始
+            index(string): 可选，提醒的序号，从1开始，字符串形式如"1"
         '''
         # 如果指定了序号，直接调用remove_reminder
         if index is not None:
@@ -110,7 +110,7 @@ class SmartReminder(Star):
                         repeat_type: str = None,       # 重复类型 daily,weekly,monthly,yearly
                         date: str = None,              # 具体日期 YYYY-MM-DD
                         all: str = None,               # 是否删除所有 "yes"/"no"
-                        index: int = None              # 任务的序号，从1开始
+                        index: str = None              # 任务的序号，从1开始，字符串形式
                         ):
         '''删除符合条件的任务，可组合多个条件进行精确筛选
         
@@ -121,7 +121,7 @@ class SmartReminder(Star):
             repeat_type(string): 可选，重复类型，可选值：daily,weekly,monthly,yearly
             date(string): 可选，具体日期，格式为 YYYY-MM-DD，如 "2024-02-09"
             all(string): 可选，是否删除所有任务，可选值：yes/no，默认no
-            index(int): 可选，任务的序号，从1开始
+            index(string): 可选，任务的序号，从1开始，字符串形式如"1"
         '''
         # 如果指定了序号，直接调用remove_reminder
         if index is not None:
