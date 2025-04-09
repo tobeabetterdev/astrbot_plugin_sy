@@ -228,6 +228,9 @@ class ReminderScheduler:
         # 区分提醒和任务
         is_task = reminder.get("is_task", False)
         
+        # 判断是否为群聊
+        is_group_chat = "@chatroom" in unified_msg_origin
+        
         if provider:
             if is_task:
                 # 任务模式：模拟用户发送消息，让AI执行任务
@@ -269,11 +272,11 @@ class ReminderScheduler:
                 # 构建消息链
                 msg = MessageChain()
                 
-                # 如果存在创建者ID，则添加@
-                if "creator_id" in reminder and reminder["creator_id"]:
-                    if ":" in unified_msg_origin and unified_msg_origin.startswith("aiocqhttp"):
+                # 如果是群聊且存在创建者ID，则添加@
+                if is_group_chat and "creator_id" in reminder and reminder["creator_id"]:
+                    if unified_msg_origin.startswith("aiocqhttp"):
                         msg.chain.append(At(qq=reminder["creator_id"]))  # QQ平台
-                    elif ":" in unified_msg_origin and unified_msg_origin.startswith("gewechat"):
+                    elif unified_msg_origin.startswith("gewechat"):
                         # 微信平台 - 使用用户名/昵称而不是ID
                         if "creator_name" in reminder and reminder["creator_name"]:
                             msg.chain.append(At(qq=reminder["creator_id"], name=reminder["creator_name"]))
@@ -292,11 +295,11 @@ class ReminderScheduler:
             # 构建基础消息链
             msg = MessageChain()
             
-            # 如果存在创建者ID，则添加@
-            if "creator_id" in reminder and reminder["creator_id"]:
-                if ":" in unified_msg_origin and unified_msg_origin.startswith("aiocqhttp"):
+            # 如果是群聊且存在创建者ID，则添加@
+            if is_group_chat and "creator_id" in reminder and reminder["creator_id"]:
+                if unified_msg_origin.startswith("aiocqhttp"):
                     msg.chain.append(At(qq=reminder["creator_id"]))  # QQ平台
-                elif ":" in unified_msg_origin and unified_msg_origin.startswith("gewechat"):
+                elif unified_msg_origin.startswith("gewechat"):
                     # 微信平台 - 使用用户名/昵称而不是ID
                     if "creator_name" in reminder and reminder["creator_name"]:
                         msg.chain.append(At(qq=reminder["creator_id"], name=reminder["creator_name"]))
