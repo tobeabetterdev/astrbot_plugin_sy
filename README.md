@@ -88,6 +88,16 @@
 - `workday`: 仅在工作日触发（法定节假日不触发）
 - `holiday`: 仅在法定节假日触发
 
+组合使用方式：
+- `daily_workday`: 每个工作日重复
+- `daily_holiday`: 每个法定节假日重复
+- `weekly_workday`: 每周的指定日期，但仅在工作日触发
+- `weekly_holiday`: 每周的指定日期，但仅在法定节假日触发
+- `monthly_workday`: 每月的指定日期，但仅在工作日触发
+- `monthly_holiday`: 每月的指定日期，但仅在法定节假日触发
+- `yearly_workday`: 每年的指定日期，但仅在工作日触发
+- `yearly_holiday`: 每年的指定日期，但仅在法定节假日触发
+
 ## 配置说明
 
 插件会在 `data/reminders/` 目录下自动创建 `reminder_data.json` 文件用于存储提醒和任务数据，无需手动配置。
