@@ -228,8 +228,9 @@ class ReminderScheduler:
         # 区分提醒和任务
         is_task = reminder.get("is_task", False)
         
-        # 判断是否为群聊
-        is_group_chat = "@chatroom" in unified_msg_origin
+        # 判断是否为私聊（用于排除私聊的@）
+        is_private_chat = (unified_msg_origin.startswith("gewechat") and "FriendMessage" in unified_msg_origin) or \
+                         (unified_msg_origin.startswith("aiocqhttp") and ":private:" in unified_msg_origin)
         
         if provider:
             if is_task:
@@ -272,8 +273,8 @@ class ReminderScheduler:
                 # 构建消息链
                 msg = MessageChain()
                 
-                # 如果是群聊且存在创建者ID，则添加@
-                if is_group_chat and "creator_id" in reminder and reminder["creator_id"]:
+                # 如果不是私聊且存在创建者ID，则添加@
+                if not is_private_chat and "creator_id" in reminder and reminder["creator_id"]:
                     if unified_msg_origin.startswith("aiocqhttp"):
                         msg.chain.append(At(qq=reminder["creator_id"]))  # QQ平台
                     elif unified_msg_origin.startswith("gewechat"):
@@ -295,8 +296,8 @@ class ReminderScheduler:
             # 构建基础消息链
             msg = MessageChain()
             
-            # 如果是群聊且存在创建者ID，则添加@
-            if is_group_chat and "creator_id" in reminder and reminder["creator_id"]:
+            # 如果不是私聊且存在创建者ID，则添加@
+            if not is_private_chat and "creator_id" in reminder and reminder["creator_id"]:
                 if unified_msg_origin.startswith("aiocqhttp"):
                     msg.chain.append(At(qq=reminder["creator_id"]))  # QQ平台
                 elif unified_msg_origin.startswith("gewechat"):
