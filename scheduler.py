@@ -593,7 +593,30 @@ class ReminderScheduler:
                     # 只有在需要时才发送消息
                     if need_send_result:
                         logger.info(f"尝试发送消息到: {unified_msg_origin}")
-                        send_result = await self.context.send_message(unified_msg_origin, result_msg)
+                        
+                        # 构建最终的消息链，先添加@再添加结果
+                        final_msg = MessageChain()
+                        
+                        # 添加@，复用提醒模式中的@逻辑
+                        if not is_private_chat and "creator_id" in reminder and reminder["creator_id"]:
+                            if unified_msg_origin.startswith("aiocqhttp"):
+                                final_msg.chain.append(At(qq=reminder["creator_id"]))  # QQ平台
+                            elif unified_msg_origin.startswith("gewechat"):
+                                # 微信平台 - 使用用户名/昵称而不是ID
+                                if "creator_name" in reminder and reminder["creator_name"]:
+                                    final_msg.chain.append(At(qq=reminder["creator_id"], name=reminder["creator_name"]))
+                                else:
+                                    # 如果没有保存用户名，尝试使用ID
+                                    final_msg.chain.append(At(qq=reminder["creator_id"]))
+                            else:
+                                # 其他平台的@实现
+                                final_msg.chain.append(Plain(f"@{reminder['creator_id']} "))
+                        
+                        # 添加结果消息内容
+                        for item in result_msg.chain:
+                            final_msg.chain.append(item)
+                        
+                        send_result = await self.context.send_message(unified_msg_origin, final_msg)
                         logger.info(f"消息发送结果: {send_result}")
                     else:
                         logger.info("跳过发送结果，因为函数已自行处理消息发送")
@@ -619,12 +642,58 @@ class ReminderScheduler:
                     await self.context.send_message(unified_msg_origin, error_msg)
             else:
                 # 提醒模式：只是提醒用户
-                prompt = f"你现在在和{reminder['user_name']}对话，发出提醒给他，提醒内容是'{reminder['text']}'。直接发出对话内容，就是你说的话，不要有其他的背景描述。"
+                
+                # 获取对话上下文，以便LLM生成更自然的回复
+                try:
+                    curr_cid = await self.context.conversation_manager.get_curr_conversation_id(unified_msg_origin)
+                    conversation = None
+                    contexts = []
+                    
+                    if curr_cid:
+                        conversation = await self.context.conversation_manager.get_conversation(unified_msg_origin, curr_cid)
+                        if conversation:
+                            contexts = json.loads(conversation.history)
+                            logger.info(f"提醒模式：找到用户对话，对话ID: {curr_cid}, 上下文长度: {len(contexts)}")
+                except Exception as e:
+                    logger.warning(f"提醒模式：获取对话上下文失败: {str(e)}")
+                    contexts = []
+                
+                # 构建更丰富的提醒提示词
+                user_name = reminder.get("user_name", "用户")
+                current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+                
+                # 基于上下文量身定制提示词
+                if len(contexts) > 2:
+                    # 有对话历史，可以更自然地引入提醒
+                    prompt = f"""你现在需要向{user_name}发送一条预设的提醒。
+
+当前时间是 {current_time}
+提醒内容: {reminder['text']}
+
+考虑到用户最近的对话内容，请以自然、友好的方式插入这条提醒。可以根据用户的聊天风格调整你的语气，但确保提醒内容清晰传达。
+如果提醒内容与最近对话有关联，可以建立连接；如果无关，可以用适当的过渡语引入。
+
+直接输出你要发送的提醒内容，无需说明这是提醒。"""
+                else:
+                    # 没有太多对话历史，使用变化的表达方式
+                    reminder_styles = [
+                        f"嘿，{user_name}！这是你设置的提醒：{reminder['text']}",
+                        f"提醒时间到了！{reminder['text']}",
+                        f"别忘了：{reminder['text']}",
+                        f"温馨提醒，{user_name}：{reminder['text']}",
+                        f"时间提醒：{reminder['text']}",
+                        f"叮咚！{reminder['text']}",
+                    ]
+                    import random
+                    chosen_style = random.choice(reminder_styles)
+                    prompt = f"""你需要提醒用户"{reminder['text']}"。
+请以自然、友好的方式表达这个提醒，可以参考但不限于这种表达方式："{chosen_style}"。
+根据提醒的内容，调整你的表达，使其听起来自然且贴心。直接输出你要发送的提醒内容，无需说明这是提醒。"""
                 
                 response = await provider.text_chat(
                     prompt=prompt,
                     session_id=unified_msg_origin,
-                    contexts=[]  # 确保contexts是一个空列表而不是None
+                    contexts=contexts[:5] if contexts else []  # 使用最近的5条对话作为上下文
                 )
                 logger.info(f"Reminder Activated: {reminder['text']}, created by {unified_msg_origin}")
                 
@@ -647,10 +716,29 @@ class ReminderScheduler:
                         msg.chain.append(Plain(f"@{reminder['creator_id']} "))
                 
                 # 提醒需要[提醒]前缀
-                msg.chain.append(Plain("[提醒]" + response.completion_text))
+                msg.chain.append(Plain("[提醒] " + response.completion_text))
                 
                 send_result = await self.context.send_message(unified_msg_origin, msg)
                 logger.info(f"消息发送结果: {send_result}")
+                
+                # 如果有对话上下文，记录这次提醒到对话历史
+                if curr_cid and conversation:
+                    try:
+                        new_contexts = contexts.copy()
+                        # 添加系统消息表示这是一个提醒
+                        new_contexts.append({"role": "system", "content": f"系统在 {current_time} 触发了提醒: {reminder['text']}"})
+                        # 添加AI的回复
+                        new_contexts.append({"role": "assistant", "content": response.completion_text})
+                        
+                        # 更新对话历史
+                        await self.context.conversation_manager.update_conversation(
+                            unified_msg_origin, 
+                            curr_cid, 
+                            history=new_contexts
+                        )
+                        logger.info(f"提醒已添加到对话历史，对话ID: {curr_cid}")
+                    except Exception as e:
+                        logger.error(f"更新提醒对话历史失败: {str(e)}")
         else:
             logger.warning(f"没有可用的提供商，使用简单消息")
             # 构建基础消息链
