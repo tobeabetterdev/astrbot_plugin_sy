@@ -43,8 +43,13 @@ def parse_datetime(datetime_str: str) -> str:
 
 def is_outdated(reminder: dict) -> bool:
     '''检查提醒是否过期'''
-    if "datetime" in reminder:
-        return datetime.datetime.strptime(reminder["datetime"], "%Y-%m-%d %H:%M") < datetime.datetime.now()
+    if "datetime" in reminder and reminder["datetime"]:  # 确保datetime存在且不为空
+        try:
+            return datetime.datetime.strptime(reminder["datetime"], "%Y-%m-%d %H:%M") < datetime.datetime.now()
+        except ValueError:
+            # 如果日期格式不正确，记录错误并返回False
+            logger.error(f"提醒的日期时间格式错误: {reminder.get('datetime', '')}")
+            return False
     return False
 
 def load_reminder_data(data_file: str) -> dict:
@@ -57,11 +62,12 @@ def load_reminder_data(data_file: str) -> dict:
 
 async def save_reminder_data(data_file: str, reminder_data: dict):
     '''保存提醒数据'''
-    # 在保存前清理过期的一次性任务
+    # 在保存前清理过期的一次性任务和无效数据
     for group in list(reminder_data.keys()):
         reminder_data[group] = [
             r for r in reminder_data[group] 
-            if not (r.get("repeat", "none") == "none" and is_outdated(r))
+            if "datetime" in r and r["datetime"] and  # 确保datetime字段存在且不为空
+               not (r.get("repeat", "none") == "none" and is_outdated(r))
         ]
         # 如果群组没有任何提醒了，删除这个群组的条目
         if not reminder_data[group]:
