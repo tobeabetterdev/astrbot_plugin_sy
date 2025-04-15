@@ -4,7 +4,7 @@ from astrbot.api.message_components import *
 from astrbot.api.event.filter import command, command_group
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.schedulers.base import JobLookupError
-from astrbot.api import logger
+from astrbot.api import logger, AstrBotConfig
 from astrbot.api.event import MessageChain
 import datetime
 import json
@@ -15,10 +15,14 @@ from .utils import load_reminder_data, parse_datetime, save_reminder_data, is_ou
 from .scheduler import ReminderScheduler
 from .tools import ReminderTools
 
-@register("ai_reminder", "kjqwdw", "智能定时任务，输入/rmd help查看帮助", "1.0.7")
+@register("ai_reminder", "kjqwdw", "智能定时任务，输入/rmd help查看帮助", "1.0.8")
 class SmartReminder(Star):
-    def __init__(self, context: Context):
+    def __init__(self, context: Context, config: AstrBotConfig = None):
         super().__init__(context)
+        
+        # 保存配置
+        self.config = config or {}
+        self.unique_session = self.config.get("unique_session", False)
         
         # 使用data目录下的数据文件，而非插件自身目录
         data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data")
@@ -30,10 +34,13 @@ class SmartReminder(Star):
         self.reminder_data = load_reminder_data(self.data_file)
         
         # 初始化调度器
-        self.scheduler_manager = ReminderScheduler(context, self.reminder_data, self.data_file)
+        self.scheduler_manager = ReminderScheduler(context, self.reminder_data, self.data_file, self.unique_session)
         
         # 初始化工具
         self.tools = ReminderTools(self)
+        
+        # 记录配置信息
+        logger.info(f"智能提醒插件启动成功，会话隔离：{'启用' if self.unique_session else '禁用'}")
 
     @filter.llm_tool(name="set_reminder")
     async def set_reminder(self, event, text: str, datetime_str: str, user_name: str = "用户", repeat: str = None, holiday_type: str = None):
@@ -114,7 +121,18 @@ class SmartReminder(Star):
     @rmd.command("ls")
     async def list_reminders(self, event: AstrMessageEvent):
         '''列出所有提醒和任务'''
-        reminders = self.reminder_data.get(event.unified_msg_origin, [])
+        # 获取用户ID，用于会话隔离
+        creator_id = event.get_sender_id()
+        
+        # 获取会话ID
+        raw_msg_origin = event.unified_msg_origin
+        if self.unique_session:
+            # 使用会话隔离
+            msg_origin = self.tools.get_session_id(raw_msg_origin, creator_id)
+        else:
+            msg_origin = raw_msg_origin
+            
+        reminders = self.reminder_data.get(msg_origin, [])
         if not reminders:
             yield event.plain_result("当前没有设置任何提醒或任务。")
             return
@@ -197,7 +215,18 @@ class SmartReminder(Star):
         Args:
             index(int): 提醒或任务的序号
         '''
-        reminders = self.reminder_data.get(event.unified_msg_origin, [])
+        # 获取用户ID，用于会话隔离
+        creator_id = event.get_sender_id()
+        
+        # 获取会话ID
+        raw_msg_origin = event.unified_msg_origin
+        if self.unique_session:
+            # 使用会话隔离
+            msg_origin = self.tools.get_session_id(raw_msg_origin, creator_id)
+        else:
+            msg_origin = raw_msg_origin
+            
+        reminders = self.reminder_data.get(msg_origin, [])
         if not reminders:
             yield event.plain_result("没有设置任何提醒或任务。")
             return
@@ -207,7 +236,6 @@ class SmartReminder(Star):
             return
             
         # 获取要删除的提醒或任务
-        msg_origin = event.unified_msg_origin
         job_id = f"reminder_{msg_origin}_{index-1}"
         
         # 尝试删除调度任务
@@ -297,8 +325,17 @@ class SmartReminder(Star):
                 yield event.plain_result("节假日类型错误，可选值：workday(仅工作日执行)，holiday(仅法定节假日执行)")
                 return
 
-            msg_origin = event.unified_msg_origin
+            # 获取用户ID，用于会话隔离
             creator_id = event.get_sender_id()
+            
+            # 获取会话ID
+            raw_msg_origin = event.unified_msg_origin
+            if self.unique_session:
+                # 使用会话隔离
+                msg_origin = self.tools.get_session_id(raw_msg_origin, creator_id)
+            else:
+                msg_origin = raw_msg_origin
+                
             # 获取创建者昵称
             creator_name = event.message_obj.sender.nickname if hasattr(event.message_obj, 'sender') and hasattr(event.message_obj.sender, 'nickname') else None
             
@@ -436,8 +473,17 @@ class SmartReminder(Star):
                 yield event.plain_result("节假日类型错误，可选值：workday(仅工作日执行)，holiday(仅法定节假日执行)")
                 return
 
-            msg_origin = event.unified_msg_origin
+            # 获取用户ID，用于会话隔离
             creator_id = event.get_sender_id()
+            
+            # 获取会话ID
+            raw_msg_origin = event.unified_msg_origin
+            if self.unique_session:
+                # 使用会话隔离
+                msg_origin = self.tools.get_session_id(raw_msg_origin, creator_id)
+            else:
+                msg_origin = raw_msg_origin
+                
             # 获取创建者昵称
             creator_name = event.message_obj.sender.nickname if hasattr(event.message_obj, 'sender') and hasattr(event.message_obj.sender, 'nickname') else None
             
@@ -566,6 +612,15 @@ class SmartReminder(Star):
 8. AI智能提醒与任务
    正常对话即可，AI会自己设置提醒或任务，但需要AI支持LLM
 
+9. 会话隔离功能
+   {session_isolation_status}
+   - 关闭状态：群聊中所有成员共享同一组提醒和任务
+   - 开启状态：群聊中每个成员都有自己独立的提醒和任务
+   
+   可以通过管理面板的插件配置开启或关闭此功能
+
 注：时间格式为 HH:MM 或 HHMM，如 8:05 或 0805
-法定节假日数据来源：http://timor.tech/api/holiday"""
+法定节假日数据来源：http://timor.tech/api/holiday""".format(
+           session_isolation_status="当前已开启会话隔离" if self.unique_session else "当前未开启会话隔离"
+        )
         yield event.plain_result(help_text)

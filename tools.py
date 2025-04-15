@@ -12,6 +12,34 @@ class ReminderTools:
         self.reminder_data = star_instance.reminder_data
         self.data_file = star_instance.data_file
         self.scheduler_manager = star_instance.scheduler_manager
+        self.unique_session = star_instance.unique_session
+    
+    def get_session_id(self, msg_origin, creator_id=None):
+        """
+        根据会话隔离设置，获取正确的会话ID
+        
+        Args:
+            msg_origin: 原始会话ID
+            creator_id: 创建者ID
+            
+        Returns:
+            str: 处理后的会话ID
+        """
+        if not self.unique_session:
+            return msg_origin
+            
+        # 如果启用了会话隔离，并且有创建者ID，则在会话ID中添加用户标识
+        if creator_id and ":" in msg_origin:
+            # 在群聊环境中添加用户ID
+            if (":GroupMessage:" in msg_origin or 
+                "@chatroom" in msg_origin or
+                ":ChannelMessage:" in msg_origin):
+                # 分割会话ID并在末尾添加用户标识
+                parts = msg_origin.rsplit(":", 1)
+                if len(parts) == 2:
+                    return f"{parts[0]}:{parts[1]}_{creator_id}"
+        
+        return msg_origin
     
     async def set_reminder(self, event: Union[AstrMessageEvent, Context], text: str, datetime_str: str, user_name: str = "用户", repeat: str = None, holiday_type: str = None):
         '''设置一个提醒
@@ -29,10 +57,13 @@ class ReminderTools:
                 creator_id = None  # Context 模式下无法获取创建者ID
                 creator_name = None
             else:
-                msg_origin = event.unified_msg_origin
-                creator_id = event.get_sender_id() if event.message_obj.group_id else None
+                raw_msg_origin = event.unified_msg_origin
+                creator_id = event.get_sender_id()
                 # 获取创建者昵称
                 creator_name = event.message_obj.sender.nickname if hasattr(event.message_obj, 'sender') and hasattr(event.message_obj.sender, 'nickname') else None
+                
+                # 使用会话隔离功能获取会话ID
+                msg_origin = self.get_session_id(raw_msg_origin, creator_id)
             
             if msg_origin not in self.reminder_data:
                 self.reminder_data[msg_origin] = []
@@ -109,10 +140,13 @@ class ReminderTools:
                 creator_id = None  # Context 模式下无法获取创建者ID
                 creator_name = None
             else:
-                msg_origin = event.unified_msg_origin
-                creator_id = event.get_sender_id() if event.message_obj.group_id else None
+                raw_msg_origin = event.unified_msg_origin
+                creator_id = event.get_sender_id()
                 # 获取创建者昵称
                 creator_name = event.message_obj.sender.nickname if hasattr(event.message_obj, 'sender') and hasattr(event.message_obj.sender, 'nickname') else None
+                
+                # 使用会话隔离功能获取会话ID
+                msg_origin = self.get_session_id(raw_msg_origin, creator_id)
             
             if msg_origin not in self.reminder_data:
                 self.reminder_data[msg_origin] = []
@@ -199,8 +233,13 @@ class ReminderTools:
         try:
             if isinstance(event, Context):
                 msg_origin = self.context.get_event_queue()._queue[0].session_id
+                creator_id = None
             else:
-                msg_origin = event.unified_msg_origin
+                raw_msg_origin = event.unified_msg_origin
+                creator_id = event.get_sender_id()
+                
+                # 使用会话隔离功能获取会话ID
+                msg_origin = self.get_session_id(raw_msg_origin, creator_id)
             
             # 调试信息：打印所有调度任务
             logger.info("Current jobs in scheduler:")

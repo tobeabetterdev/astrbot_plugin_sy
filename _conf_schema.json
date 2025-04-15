@@ -1,0 +1,9 @@
+{
+    "unique_session": {
+        "description": "启用会话隔离",
+        "type": "bool",
+        "hint": "启用后，在群组或频道中，每个人的提醒和任务都是独立的。不同用户之间无法看到和操作对方的提醒和任务。",
+        "obvious_hint": true,
+        "default": false
+    }
+} 

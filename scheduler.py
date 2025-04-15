@@ -8,10 +8,11 @@ from astrbot.api.message_components import At, Plain
 from .utils import is_outdated, save_reminder_data, HolidayManager
 
 class ReminderScheduler:
-    def __init__(self, context, reminder_data, data_file):
+    def __init__(self, context, reminder_data, data_file, unique_session=False):
         self.context = context
         self.reminder_data = reminder_data
         self.data_file = data_file
+        self.unique_session = unique_session
         self.scheduler = AsyncIOScheduler()
         self.holiday_manager = HolidayManager()  # 创建节假日管理器
         self._init_scheduler()
@@ -942,4 +943,33 @@ class ReminderScheduler:
             return True
         except JobLookupError:
             logger.error(f"Job not found: {job_id}")
-            return False 
+            return False
+    
+    # 获取会话ID
+    def get_session_id(self, unified_msg_origin, reminder):
+        """
+        根据会话隔离设置，获取正确的会话ID
+        
+        Args:
+            unified_msg_origin: 原始会话ID
+            reminder: 提醒/任务数据
+            
+        Returns:
+            str: 处理后的会话ID
+        """
+        if not self.unique_session:
+            return unified_msg_origin
+            
+        # 如果启用了会话隔离，并且有创建者ID，则在会话ID中添加用户标识
+        creator_id = reminder.get("creator_id")
+        if creator_id and ":" in unified_msg_origin:
+            # 在群聊环境中添加用户ID
+            if (":GroupMessage:" in unified_msg_origin or 
+                "@chatroom" in unified_msg_origin or
+                ":ChannelMessage:" in unified_msg_origin):
+                # 分割会话ID并在末尾添加用户标识
+                parts = unified_msg_origin.rsplit(":", 1)
+                if len(parts) == 2:
+                    return f"{parts[0]}:{parts[1]}_{creator_id}"
+        
+        return unified_msg_origin 
