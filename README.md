@@ -146,7 +146,8 @@
 
 ## 法定节假日数据来源
 
-法定节假日数据使用第三方API获取：http://timor.tech/api/holiday。数据会在本地缓存，避免频繁调用API。
+法定节假日数据使用第三方API获取：http://timor.tech/api/holiday
+数据会在本地缓存，避免频繁调用API。
 
 ## 依赖要求
 
