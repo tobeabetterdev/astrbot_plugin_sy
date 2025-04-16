@@ -153,4 +153,4 @@
 ## 问题反馈
 
 如有问题或建议，请访问以下地址反馈：
-https://github.com/kjqwer/astrbot_plugin_sy
+[反馈](https://github.com/kjqwer/astrbot_plugin_sy/issues)
