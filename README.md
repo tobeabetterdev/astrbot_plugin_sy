@@ -68,6 +68,7 @@
 ![提醒演示](image/ys1.png)
 ![任务列表](image/ys2.png)
 ![自动执行任务](image/ys3.png)
+![人性化回复](image/ys4.png)
 
 ### 重复类型说明
 
