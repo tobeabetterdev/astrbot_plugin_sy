@@ -302,23 +302,27 @@ class ReminderScheduler:
                 logger.info(f"LLM工具管理器加载成功: {func_tool is not None}")
                 
                 try:
-                    # 检查对话上下文
-                    conversation = None
-                    contexts = []
-                    
-                    # 获取用户当前与LLM的对话以获得上下文信息
-                    curr_cid = await self.context.conversation_manager.get_curr_conversation_id(unified_msg_origin)
-                    
-                    if curr_cid:
-                        conversation = await self.context.conversation_manager.get_conversation(unified_msg_origin, curr_cid)
-                        if conversation:
-                            contexts = json.loads(conversation.history)
-                            logger.info(f"找到用户对话，对话ID: {curr_cid}, 上下文长度: {len(contexts)}")
+                    # 获取对话上下文，以便LLM生成更自然的回复
+                    try:
+                        # 获取原始消息ID（去除用户隔离部分）
+                        original_msg_origin = self.get_original_session_id(unified_msg_origin)
+                        curr_cid = await self.context.conversation_manager.get_curr_conversation_id(original_msg_origin)
+                        conversation = None
+                        contexts = []
+                        
+                        if curr_cid:
+                            conversation = await self.context.conversation_manager.get_conversation(original_msg_origin, curr_cid)
+                            if conversation:
+                                contexts = json.loads(conversation.history)
+                                logger.info(f"提醒模式：找到用户对话，对话ID: {curr_cid}, 上下文长度: {len(contexts)}")
+                    except Exception as e:
+                        logger.warning(f"提醒模式：获取对话上下文失败: {str(e)}")
+                        contexts = []
                     
                     # 如果没有对话或需要新建对话
                     if not curr_cid or not conversation:
-                        curr_cid = await self.context.conversation_manager.new_conversation(unified_msg_origin)
-                        conversation = await self.context.conversation_manager.get_conversation(unified_msg_origin, curr_cid)
+                        curr_cid = await self.context.conversation_manager.new_conversation(original_msg_origin)
+                        conversation = await self.context.conversation_manager.get_conversation(original_msg_origin, curr_cid)
                         logger.info(f"创建新对话，对话ID: {curr_cid}")
                     
                     # 检查是否是调用LLM函数的任务
@@ -406,14 +410,19 @@ class ReminderScheduler:
                                     # 创建一个特殊的session_id用于发送功能
                                     send_session_id = None
                                     if ":" in unified_msg_origin:
-                                        if len(unified_msg_origin.split(":")) >= 3:
-                                            # 保留原始session_id结构，但确保不会因分割过多引发错误
-                                            parts = unified_msg_origin.split(":", 2)
-                                            msg_type = "FriendMessage" if is_private_chat else "GroupMessage"
-                                            send_session_id = f"{parts[0]}:{msg_type}:{parts[2]}"
-                                        else:
-                                            # 使用原始session_id
-                                            send_session_id = unified_msg_origin
+                                        # 优先使用原始会话ID（去除用户隔离部分）
+                                        send_session_id = self.get_original_session_id(unified_msg_origin)
+                                        
+                                        # 如果格式不对，尝试其他方式
+                                        if len(send_session_id.split(":")) < 2:
+                                            if len(unified_msg_origin.split(":")) >= 3:
+                                                # 保留原始session_id结构，但确保不会因分割过多引发错误
+                                                parts = unified_msg_origin.split(":", 2)
+                                                msg_type = "FriendMessage" if is_private_chat else "GroupMessage"
+                                                send_session_id = f"{parts[0]}:{msg_type}:{parts[2]}"
+                                            else:
+                                                # 使用原始session_id
+                                                send_session_id = unified_msg_origin
                                     else:
                                         # 如果session_id没有合适格式，构造一个基本形式
                                         msg_type = "FriendMessage" if is_private_chat else "GroupMessage"
@@ -593,16 +602,18 @@ class ReminderScheduler:
                     
                     # 只有在需要时才发送消息
                     if need_send_result:
-                        logger.info(f"尝试发送消息到: {unified_msg_origin}")
+                        # 获取原始消息ID（去除用户隔离部分）
+                        original_msg_origin = self.get_original_session_id(unified_msg_origin)
+                        logger.info(f"尝试发送消息到: {original_msg_origin} (原始ID: {unified_msg_origin})")
                         
                         # 构建最终的消息链，先添加@再添加结果
                         final_msg = MessageChain()
                         
                         # 添加@，复用提醒模式中的@逻辑
                         if not is_private_chat and "creator_id" in reminder and reminder["creator_id"]:
-                            if unified_msg_origin.startswith("aiocqhttp"):
+                            if original_msg_origin.startswith("aiocqhttp"):
                                 final_msg.chain.append(At(qq=reminder["creator_id"]))  # QQ平台
-                            elif unified_msg_origin.startswith("gewechat"):
+                            elif original_msg_origin.startswith("gewechat"):
                                 # 微信平台 - 使用用户名/昵称而不是ID
                                 if "creator_name" in reminder and reminder["creator_name"]:
                                     final_msg.chain.append(At(qq=reminder["creator_id"], name=reminder["creator_name"]))
@@ -617,19 +628,32 @@ class ReminderScheduler:
                         for item in result_msg.chain:
                             final_msg.chain.append(item)
                         
-                        send_result = await self.context.send_message(unified_msg_origin, final_msg)
+                        send_result = await self.context.send_message(original_msg_origin, final_msg)
                         logger.info(f"消息发送结果: {send_result}")
                     else:
                         logger.info("跳过发送结果，因为函数已自行处理消息发送")
                     
-                    # 更新对话历史
-                    if conversation:
-                        await self.context.conversation_manager.update_conversation(
-                            unified_msg_origin, 
-                            curr_cid, 
-                            history=new_contexts
-                        )
-                        logger.info(f"已更新对话历史，对话ID: {curr_cid}")
+                    # 如果有对话上下文，记录这次提醒到对话历史
+                    if curr_cid and conversation:
+                        try:
+                            new_contexts = contexts.copy()
+                            # 添加系统消息表示这是一个提醒
+                            new_contexts.append({"role": "system", "content": f"系统在 {current_time} 触发了提醒: {reminder['text']}"})
+                            # 添加AI的回复
+                            new_contexts.append({"role": "assistant", "content": response.completion_text})
+                            
+                            # 获取原始消息ID（去除用户隔离部分）
+                            original_msg_origin = self.get_original_session_id(unified_msg_origin)
+                            
+                            # 更新对话历史
+                            await self.context.conversation_manager.update_conversation(
+                                original_msg_origin, 
+                                curr_cid, 
+                                history=new_contexts
+                            )
+                            logger.info(f"提醒已添加到对话历史，对话ID: {curr_cid}")
+                        except Exception as e:
+                            logger.error(f"更新提醒对话历史失败: {str(e)}")
                     
                     logger.info(f"Task executed: {task_text}")
                 except Exception as e:
@@ -640,18 +664,23 @@ class ReminderScheduler:
                     # 尝试发送错误消息
                     error_msg = MessageChain()
                     error_msg.chain.append(Plain(f"执行任务时出错: {str(e)}"))
-                    await self.context.send_message(unified_msg_origin, error_msg)
+                    
+                    # 获取原始消息ID（去除用户隔离部分）
+                    original_msg_origin = self.get_original_session_id(unified_msg_origin)
+                    await self.context.send_message(original_msg_origin, error_msg)
             else:
                 # 提醒模式：只是提醒用户
                 
                 # 获取对话上下文，以便LLM生成更自然的回复
                 try:
-                    curr_cid = await self.context.conversation_manager.get_curr_conversation_id(unified_msg_origin)
+                    # 获取原始消息ID（去除用户隔离部分）
+                    original_msg_origin = self.get_original_session_id(unified_msg_origin)
+                    curr_cid = await self.context.conversation_manager.get_curr_conversation_id(original_msg_origin)
                     conversation = None
                     contexts = []
                     
                     if curr_cid:
-                        conversation = await self.context.conversation_manager.get_conversation(unified_msg_origin, curr_cid)
+                        conversation = await self.context.conversation_manager.get_conversation(original_msg_origin, curr_cid)
                         if conversation:
                             contexts = json.loads(conversation.history)
                             logger.info(f"提醒模式：找到用户对话，对话ID: {curr_cid}, 上下文长度: {len(contexts)}")
@@ -719,7 +748,11 @@ class ReminderScheduler:
                 # 提醒需要[提醒]前缀
                 msg.chain.append(Plain("[提醒] " + response.completion_text))
                 
-                send_result = await self.context.send_message(unified_msg_origin, msg)
+                # 获取原始消息ID（去除用户隔离部分）
+                original_msg_origin = self.get_original_session_id(unified_msg_origin)
+                logger.info(f"尝试发送提醒消息到: {original_msg_origin} (原始ID: {unified_msg_origin})")
+                
+                send_result = await self.context.send_message(original_msg_origin, msg)
                 logger.info(f"消息发送结果: {send_result}")
                 
                 # 如果有对话上下文，记录这次提醒到对话历史
@@ -731,9 +764,12 @@ class ReminderScheduler:
                         # 添加AI的回复
                         new_contexts.append({"role": "assistant", "content": response.completion_text})
                         
+                        # 获取原始消息ID（去除用户隔离部分）
+                        original_msg_origin = self.get_original_session_id(unified_msg_origin)
+                        
                         # 更新对话历史
                         await self.context.conversation_manager.update_conversation(
-                            unified_msg_origin, 
+                            original_msg_origin, 
                             curr_cid, 
                             history=new_contexts
                         )
@@ -763,7 +799,11 @@ class ReminderScheduler:
             prefix = "任务: " if is_task else "提醒: "
             msg.chain.append(Plain(f"{prefix}{reminder['text']}"))
             
-            send_result = await self.context.send_message(unified_msg_origin, msg)
+            # 获取原始消息ID（去除用户隔离部分）
+            original_msg_origin = self.get_original_session_id(unified_msg_origin)
+            logger.info(f"尝试发送简单消息到: {original_msg_origin} (原始ID: {unified_msg_origin})")
+            
+            send_result = await self.context.send_message(original_msg_origin, msg)
             logger.info(f"消息发送结果: {send_result}")
             
         # 如果是一次性任务（非重复任务），执行后从数据中删除
@@ -972,4 +1012,46 @@ class ReminderScheduler:
                 if len(parts) == 2:
                     return f"{parts[0]}:{parts[1]}_{creator_id}"
         
-        return unified_msg_origin 
+        return unified_msg_origin
+    
+    def get_original_session_id(self, session_id):
+        """
+        从隔离格式的会话ID中提取原始会话ID，用于消息发送
+        
+        Args:
+            session_id: 可能是隔离格式的会话ID
+            
+        Returns:
+            str: 原始会话ID，适合用于消息发送
+        """
+        # 处理微信群聊的特殊情况
+        if "chatroom_" in session_id:
+            # 微信群聊ID的格式: gewechat:GroupMessage:12345678@chatroom_wxid_abc123
+            # 我们需要在@chatroom后找到隔离添加的下划线
+            chatroom_parts = session_id.split("@chatroom")
+            if len(chatroom_parts) == 2 and chatroom_parts[1].startswith("_"):
+                # 找到了@chatroom_分隔符，恢复原始ID
+                return f"{chatroom_parts[0]}@chatroom"
+        
+        # 处理其他平台的情况
+        if "_" in session_id and ":" in session_id:
+            # 如果是QQ或其他平台，通常格式是 platform:type:id_user_id
+            # 我们需要确保这是由会话隔离添加的下划线，而不是ID本身的一部分
+            
+            # 首先判断是否是gewechat平台（微信平台ID通常包含下划线）
+            if session_id.startswith("gewechat"):
+                # 微信平台需要特殊处理，我们使用上面的chatroom处理方式
+                # 对于非群聊，我们尝试通过规则判断
+                # 如果是gewechat:FriendMessage:wxid_abc123_def456，我们通常不需要处理
+                # 因为微信个人ID通常包含下划线，不适合用通用分割方法
+                return session_id
+            else:
+                # 非微信平台，使用通用规则
+                parts = session_id.rsplit(":", 1)
+                if len(parts) == 2 and "_" in parts[1]:
+                    # 查找最后一个下划线，认为这是会话隔离添加的
+                    group_id, user_id = parts[1].rsplit("_", 1)
+                    return f"{parts[0]}:{group_id}"
+        
+        # 如果不是隔离格式或无法解析，返回原始ID
+        return session_id 
