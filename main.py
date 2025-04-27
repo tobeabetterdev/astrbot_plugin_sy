@@ -15,7 +15,7 @@ from .utils import load_reminder_data, parse_datetime, save_reminder_data, is_ou
 from .scheduler import ReminderScheduler
 from .tools import ReminderTools
 
-@register("ai_reminder", "kjqwdw", "智能定时任务，输入/rmd help查看帮助", "1.0.9")
+@register("ai_reminder", "kjqwdw", "智能定时任务，输入/rmd help查看帮助", "1.0.10")
 class SmartReminder(Star):
     def __init__(self, context: Context, config: AstrBotConfig = None):
         super().__init__(context)

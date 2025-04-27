@@ -125,8 +125,8 @@ class HolidayManager:
             year: 年份，默认为当前年份
             
         Returns:
-            dict: 节假日数据，格式为 {日期字符串: 类型}
-                  类型说明: 0-工作日, 1-法定节假日, 2-节假日调休补班
+            dict: 节假日数据，格式为 {日期字符串: 布尔值}
+                  布尔值说明: True-法定节假日, False-调休工作日（需要补班的周末）
         """
         if year is None:
             year = datetime.datetime.now().year
@@ -180,14 +180,18 @@ class HolidayManager:
             date = datetime.datetime.now()
             
         year = date.year
-        date_str = date.strftime("%Y-%m-%d")
+        # 获取完整日期和不含年份的日期
+        full_date_str = date.strftime("%Y-%m-%d")
+        short_date_str = date.strftime("%m-%d")
         
         # 获取该年份的节假日数据
         holiday_data = await self.fetch_holiday_data(year)
         
-        # 判断是否为法定节假日（类型为1）
-        if date_str in holiday_data:
-            return holiday_data[date_str] == 1
+        # 判断是否在节假日数据中，使用不含年份的短日期格式
+        if short_date_str in holiday_data:
+            # 如果值为True，表示法定节假日
+            is_holiday = holiday_data[short_date_str] == True
+            return is_holiday
             
         # 如果不在特殊日期列表中，则根据是否为周末判断
         if date.weekday() >= 5:  # 5和6分别是周六和周日
@@ -208,18 +212,22 @@ class HolidayManager:
             date = datetime.datetime.now()
             
         year = date.year
-        date_str = date.strftime("%Y-%m-%d")
+        # 获取完整日期和不含年份的日期
+        full_date_str = date.strftime("%Y-%m-%d")
+        short_date_str = date.strftime("%m-%d")
         
         # 获取该年份的节假日数据
         holiday_data = await self.fetch_holiday_data(year)
         
-        # 判断是否为节假日补班（类型为2）
-        if date_str in holiday_data:
-            return holiday_data[date_str] == 2
+        # 判断是否在节假日数据中，使用不含年份的短日期格式
+        if short_date_str in holiday_data:
+            # 如果值为False，表示调休工作日（需要补班的周末）
+            # 如果值为True，表示法定节假日
+            is_workday = holiday_data[short_date_str] == False
+            return is_workday
             
-        # 如果是周末且不是节假日补班，则不是工作日
+        # 如果是周末且不在节假日数据中，则不是工作日
         if date.weekday() >= 5:  # 5和6分别是周六和周日
             return False
             
-        # 如果不是周末，且不是法定节假日，则是工作日
-        return date_str not in holiday_data or holiday_data[date_str] == 0 
+        return True 

@@ -68,7 +68,6 @@ class ReminderScheduler:
                         args=[group, reminder],
                         hour=dt.hour,
                         minute=dt.minute,
-                        day_of_week='mon-fri',  # 先按周一到周五执行，后续再判断法定节假日
                         misfire_grace_time=60,
                         id=job_id
                     )
@@ -100,7 +99,7 @@ class ReminderScheduler:
                         self._check_and_execute_workday,
                         'cron',
                         args=[group, reminder],
-                        day_of_week=dt.weekday(),
+                        day_of_week=dt.weekday(),  # 保留这个限制，因为"每周"需要指定星期几
                         hour=dt.hour,
                         minute=dt.minute,
                         misfire_grace_time=60,
@@ -135,7 +134,7 @@ class ReminderScheduler:
                         self._check_and_execute_workday,
                         'cron',
                         args=[group, reminder],
-                        day=dt.day,
+                        day=dt.day,  # 保留这个限制，因为"每月"需要指定几号
                         hour=dt.hour,
                         minute=dt.minute,
                         misfire_grace_time=60,
@@ -171,8 +170,8 @@ class ReminderScheduler:
                         self._check_and_execute_workday,
                         'cron',
                         args=[group, reminder],
-                        month=dt.month,
-                        day=dt.day,
+                        month=dt.month,  # 保留这个限制，因为"每年"需要指定月份
+                        day=dt.day,      # 保留这个限制，因为"每年"需要指定日期
                         hour=dt.hour,
                         minute=dt.minute,
                         misfire_grace_time=60,
@@ -204,10 +203,14 @@ class ReminderScheduler:
     async def _check_and_execute_workday(self, unified_msg_origin: str, reminder: dict):
         '''检查当天是否为工作日，如果是则执行提醒'''
         today = datetime.datetime.now()
+        logger.info(f"检查日期 {today.strftime('%Y-%m-%d')} 是否为工作日，提醒内容: {reminder['text']}")
+        
         is_workday = await self.holiday_manager.is_workday(today)
+        logger.info(f"日期 {today.strftime('%Y-%m-%d')} 工作日检查结果: {is_workday}")
         
         if is_workday:
             # 如果是工作日则执行提醒
+            logger.info(f"确认今天是工作日，执行提醒: {reminder['text']}")
             await self._reminder_callback(unified_msg_origin, reminder)
         else:
             logger.info(f"今天不是工作日，跳过执行提醒: {reminder['text']}")
@@ -215,10 +218,14 @@ class ReminderScheduler:
     async def _check_and_execute_holiday(self, unified_msg_origin: str, reminder: dict):
         '''检查当天是否为法定节假日，如果是则执行提醒'''
         today = datetime.datetime.now()
+        logger.info(f"检查日期 {today.strftime('%Y-%m-%d')} 是否为法定节假日，提醒内容: {reminder['text']}")
+        
         is_holiday = await self.holiday_manager.is_holiday(today)
+        logger.info(f"日期 {today.strftime('%Y-%m-%d')} 法定节假日检查结果: {is_holiday}")
         
         if is_holiday:
             # 如果是法定节假日则执行提醒
+            logger.info(f"确认今天是法定节假日，执行提醒: {reminder['text']}")
             await self._reminder_callback(unified_msg_origin, reminder)
         else:
             logger.info(f"今天不是法定节假日，跳过执行提醒: {reminder['text']}")
@@ -841,7 +848,6 @@ class ReminderScheduler:
                 args=[msg_origin, reminder],
                 hour=dt.hour,
                 minute=dt.minute,
-                day_of_week='mon-fri',  # 先按周一到周五执行，后续再判断法定节假日
                 misfire_grace_time=60,
                 id=job_id
             )
@@ -873,7 +879,7 @@ class ReminderScheduler:
                 self._check_and_execute_workday,
                 'cron',
                 args=[msg_origin, reminder],
-                day_of_week=dt.weekday(),
+                day_of_week=dt.weekday(),  # 保留这个限制，因为"每周"需要指定星期几
                 hour=dt.hour,
                 minute=dt.minute,
                 misfire_grace_time=60,
@@ -908,7 +914,7 @@ class ReminderScheduler:
                 self._check_and_execute_workday,
                 'cron',
                 args=[msg_origin, reminder],
-                day=dt.day,
+                day=dt.day,  # 保留这个限制，因为"每月"需要指定几号
                 hour=dt.hour,
                 minute=dt.minute,
                 misfire_grace_time=60,
@@ -944,8 +950,8 @@ class ReminderScheduler:
                 self._check_and_execute_workday,
                 'cron',
                 args=[msg_origin, reminder],
-                month=dt.month,
-                day=dt.day,
+                month=dt.month,  # 保留这个限制，因为"每年"需要指定月份
+                day=dt.day,      # 保留这个限制，因为"每年"需要指定日期
                 hour=dt.hour,
                 minute=dt.minute,
                 misfire_grace_time=60,
