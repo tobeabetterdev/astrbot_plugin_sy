@@ -7,19 +7,80 @@ from astrbot.api.event import MessageChain
 from astrbot.api.message_components import At, Plain
 from .utils import is_outdated, save_reminder_data, HolidayManager
 
+# 使用全局注册表来保存调度器实例
+# 现在即使在模块重载后，调度器实例也能保持，我看你还怎么创建新实例（恼）
+import sys
+if not hasattr(sys, "_GLOBAL_SCHEDULER_REGISTRY"):
+    sys._GLOBAL_SCHEDULER_REGISTRY = {
+        'scheduler': None
+    }
+    logger.info("创建全局调度器注册表")
+else:
+    logger.info("使用现有全局调度器注册表")
+
 class ReminderScheduler:
+    def __new__(cls, context, reminder_data, data_file, unique_session=False):
+        # 使用实例属性存储初始化状态
+        instance = super(ReminderScheduler, cls).__new__(cls)
+        instance._first_init = True  # 首次初始化
+        
+        logger.info("创建 ReminderScheduler 实例")
+        return instance
+    
     def __init__(self, context, reminder_data, data_file, unique_session=False):
         self.context = context
         self.reminder_data = reminder_data
         self.data_file = data_file
         self.unique_session = unique_session
-        self.scheduler = AsyncIOScheduler()
-        self.holiday_manager = HolidayManager()  # 创建节假日管理器
+        
+        # 从全局注册表获取调度器，如果不存在则创建
+        if sys._GLOBAL_SCHEDULER_REGISTRY['scheduler'] is None:
+            sys._GLOBAL_SCHEDULER_REGISTRY['scheduler'] = AsyncIOScheduler()
+            logger.info("创建新的全局 AsyncIOScheduler 实例")
+        else:
+            logger.info("使用现有全局 AsyncIOScheduler 实例")
+        
+        # 使用全局注册表中的调度器
+        self.scheduler = sys._GLOBAL_SCHEDULER_REGISTRY['scheduler']
+        
+        # 创建节假日管理器
+        self.holiday_manager = HolidayManager()
+        
+        # 如果有现有任务且是重新初始化，清理所有现有任务
+        if not getattr(self, '_first_init', True) and self.scheduler.get_jobs():
+            logger.info("检测到重新初始化，清理现有任务")
+            for job in self.scheduler.get_jobs():
+                if job.id.startswith("reminder_"):
+                    try:
+                        self.scheduler.remove_job(job.id)
+                    except JobLookupError:
+                        pass
+        
+        # 初始化任务
         self._init_scheduler()
-        self.scheduler.start()
+        
+        # 确保调度器运行
+        if not self.scheduler.running:
+            self.scheduler.start()
+            logger.info("启动全局 AsyncIOScheduler")
+        
+        # 重置首次初始化标志
+        self._first_init = False
     
     def _init_scheduler(self):
         '''初始化定时器'''
+        logger.info(f"开始初始化调度器，加载 {sum(len(reminders) for reminders in self.reminder_data.values())} 个提醒/任务")
+        
+        # 清理当前实例关联的所有任务
+        for job in self.scheduler.get_jobs():
+            if job.id.startswith("reminder_"):
+                try:
+                    self.scheduler.remove_job(job.id)
+                    logger.info(f"移除现有任务: {job.id}")
+                except JobLookupError:
+                    pass
+        
+        # 重新添加所有任务
         for group in self.reminder_data:
             for i, reminder in enumerate(self.reminder_data[group]):
                 if "datetime" not in reminder:
@@ -43,11 +104,16 @@ class ReminderScheduler:
                     logger.error(f"无法解析时间格式 '{reminder['datetime']}': {str(e)}，跳过此提醒")
                     continue
                 
-                if reminder.get("repeat", "none") == "none" and is_outdated(reminder):
+                # 判断过期
+                repeat_type = reminder.get("repeat", "none")
+                if (repeat_type == "none" or 
+                    not any(repeat_key in repeat_type for repeat_key in ["daily", "weekly", "monthly", "yearly"])) and is_outdated(reminder):
+                    logger.info(f"跳过已过期的提醒: {reminder['text']}")
                     continue
                 
-                # 生成唯一的任务ID
-                job_id = f"reminder_{group}_{i}"
+                # 生成唯一的任务ID，添加时间戳确保唯一性
+                timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+                job_id = f"reminder_{group}_{i}_{timestamp}"
                 
                 # 根据重复类型设置不同的触发器
                 if reminder.get("repeat") == "daily":
@@ -60,6 +126,7 @@ class ReminderScheduler:
                         misfire_grace_time=60,
                         id=job_id
                     )
+                    logger.info(f"添加每日提醒: {reminder['text']} 时间: {dt.hour}:{dt.minute} ID: {job_id}")
                 elif reminder.get("repeat") == "daily_workday":
                     # 每个工作日重复
                     self.scheduler.add_job(
@@ -71,6 +138,7 @@ class ReminderScheduler:
                         misfire_grace_time=60,
                         id=job_id
                     )
+                    logger.info(f"添加工作日提醒: {reminder['text']} 时间: {dt.hour}:{dt.minute} ID: {job_id}")
                 elif reminder.get("repeat") == "daily_holiday":
                     # 每个法定节假日重复
                     self.scheduler.add_job(
@@ -82,6 +150,7 @@ class ReminderScheduler:
                         misfire_grace_time=60,
                         id=job_id
                     )
+                    logger.info(f"添加节假日提醒: {reminder['text']} 时间: {dt.hour}:{dt.minute} ID: {job_id}")
                 elif reminder.get("repeat") == "weekly":
                     self.scheduler.add_job(
                         self._reminder_callback,
@@ -93,6 +162,7 @@ class ReminderScheduler:
                         misfire_grace_time=60,
                         id=job_id
                     )
+                    logger.info(f"添加每周提醒: {reminder['text']} 时间: 每周{dt.weekday()+1} {dt.hour}:{dt.minute} ID: {job_id}")
                 elif reminder.get("repeat") == "weekly_workday":
                     # 每周的这一天，但仅工作日执行
                     self.scheduler.add_job(
@@ -105,6 +175,7 @@ class ReminderScheduler:
                         misfire_grace_time=60,
                         id=job_id
                     )
+                    logger.info(f"添加每周工作日提醒: {reminder['text']} 时间: 每周{dt.weekday()+1} {dt.hour}:{dt.minute} ID: {job_id}")
                 elif reminder.get("repeat") == "weekly_holiday":
                     # 每周的这一天，但仅法定节假日执行
                     self.scheduler.add_job(
@@ -117,6 +188,7 @@ class ReminderScheduler:
                         misfire_grace_time=60,
                         id=job_id
                     )
+                    logger.info(f"添加每周节假日提醒: {reminder['text']} 时间: 每周{dt.weekday()+1} {dt.hour}:{dt.minute} ID: {job_id}")
                 elif reminder.get("repeat") == "monthly":
                     self.scheduler.add_job(
                         self._reminder_callback,
@@ -128,6 +200,7 @@ class ReminderScheduler:
                         misfire_grace_time=60,
                         id=job_id
                     )
+                    logger.info(f"添加每月提醒: {reminder['text']} 时间: 每月{dt.day}日 {dt.hour}:{dt.minute} ID: {job_id}")
                 elif reminder.get("repeat") == "monthly_workday":
                     # 每月的这一天，但仅工作日执行
                     self.scheduler.add_job(
@@ -140,6 +213,7 @@ class ReminderScheduler:
                         misfire_grace_time=60,
                         id=job_id
                     )
+                    logger.info(f"添加每月工作日提醒: {reminder['text']} 时间: 每月{dt.day}日 {dt.hour}:{dt.minute} ID: {job_id}")
                 elif reminder.get("repeat") == "monthly_holiday":
                     # 每月的这一天，但仅法定节假日执行
                     self.scheduler.add_job(
@@ -152,6 +226,7 @@ class ReminderScheduler:
                         misfire_grace_time=60,
                         id=job_id
                     )
+                    logger.info(f"添加每月节假日提醒: {reminder['text']} 时间: 每月{dt.day}日 {dt.hour}:{dt.minute} ID: {job_id}")
                 elif reminder.get("repeat") == "yearly":
                     self.scheduler.add_job(
                         self._reminder_callback,
@@ -164,6 +239,7 @@ class ReminderScheduler:
                         misfire_grace_time=60,
                         id=job_id
                     )
+                    logger.info(f"添加每年提醒: {reminder['text']} 时间: 每年{dt.month}月{dt.day}日 {dt.hour}:{dt.minute} ID: {job_id}")
                 elif reminder.get("repeat") == "yearly_workday":
                     # 每年的这一天，但仅工作日执行
                     self.scheduler.add_job(
@@ -177,6 +253,7 @@ class ReminderScheduler:
                         misfire_grace_time=60,
                         id=job_id
                     )
+                    logger.info(f"添加每年工作日提醒: {reminder['text']} 时间: 每年{dt.month}月{dt.day}日 {dt.hour}:{dt.minute} ID: {job_id}")
                 elif reminder.get("repeat") == "yearly_holiday":
                     # 每年的这一天，但仅法定节假日执行
                     self.scheduler.add_job(
@@ -190,6 +267,7 @@ class ReminderScheduler:
                         misfire_grace_time=60,
                         id=job_id
                     )
+                    logger.info(f"添加每年节假日提醒: {reminder['text']} 时间: 每年{dt.month}月{dt.day}日 {dt.hour}:{dt.minute} ID: {job_id}")
                 else:
                     self.scheduler.add_job(
                         self._reminder_callback,
@@ -199,6 +277,7 @@ class ReminderScheduler:
                         misfire_grace_time=60,
                         id=job_id
                     )
+                    logger.info(f"添加一次性提醒: {reminder['text']} 时间: {dt.strftime('%Y-%m-%d %H:%M')} ID: {job_id}")
     
     async def _check_and_execute_workday(self, unified_msg_origin: str, reminder: dict):
         '''检查当天是否为工作日，如果是则执行提醒'''
@@ -334,8 +413,6 @@ class ReminderScheduler:
                     
                     # 检查是否是调用LLM函数的任务
                     if task_text.startswith("请调用") and "函数" in task_text:
-                        # 这是一个请求调用LLM函数的任务
-                        # 我们需要直接告诉AI执行这个任务，而不是作为普通消息处理
                         prompt = f"用户请求你执行以下操作：{task_text}。请直接执行这个任务，不要解释你在做什么，就像用户刚刚发出这个请求一样。"
                     else:
                         # 普通任务，直接让AI执行
@@ -346,7 +423,7 @@ class ReminderScheduler:
                     # 添加系统提示词，确保LLM知道它可以调用函数
                     system_prompt = "你可以调用各种函数来帮助用户完成任务，如获取天气、设置提醒等。请根据用户的需求直接调用相应的函数。"
                     
-                    # 使用方法1: 直接调用LLM，获取响应后手动处理
+                    # 直接调用LLM，获取响应后手动处理
                     # 这种方式可以让我们更精细地控制LLM调用过程和函数执行
                     response = await provider.text_chat(
                         prompt=prompt,
@@ -1033,21 +1110,19 @@ class ReminderScheduler:
         # 处理微信群聊的特殊情况
         if "chatroom_" in session_id:
             # 微信群聊ID的格式: gewechat:GroupMessage:12345678@chatroom_wxid_abc123
-            # 我们需要在@chatroom后找到隔离添加的下划线
             chatroom_parts = session_id.split("@chatroom")
             if len(chatroom_parts) == 2 and chatroom_parts[1].startswith("_"):
-                # 找到了@chatroom_分隔符，恢复原始ID
+                # 恢复原始ID
                 return f"{chatroom_parts[0]}@chatroom"
         
         # 处理其他平台的情况
         if "_" in session_id and ":" in session_id:
             # 如果是QQ或其他平台，通常格式是 platform:type:id_user_id
-            # 我们需要确保这是由会话隔离添加的下划线，而不是ID本身的一部分
             
             # 首先判断是否是gewechat平台（微信平台ID通常包含下划线）
             if session_id.startswith("gewechat"):
-                # 微信平台需要特殊处理，我们使用上面的chatroom处理方式
-                # 对于非群聊，我们尝试通过规则判断
+                # 微信平台需要特殊处理，使用上面的chatroom方式
+                # 对于非群聊，通过规则判断
                 # 如果是gewechat:FriendMessage:wxid_abc123_def456，我们通常不需要处理
                 # 因为微信个人ID通常包含下划线，不适合用通用分割方法
                 return session_id
@@ -1060,4 +1135,14 @@ class ReminderScheduler:
                     return f"{parts[0]}:{group_id}"
         
         # 如果不是隔离格式或无法解析，返回原始ID
-        return session_id 
+        return session_id
+    
+    # 析构函数不执行操作
+    def __del__(self):
+        # 不关闭调度器，因为它是全局共享的
+        pass
+
+    @staticmethod
+    def get_scheduler():
+        """获取当前的全局调度器实例"""
+        return sys._GLOBAL_SCHEDULER_REGISTRY.get('scheduler') 
