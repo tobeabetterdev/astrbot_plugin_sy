@@ -33,6 +33,9 @@ class ReminderScheduler:
         self.data_file = data_file
         self.unique_session = unique_session
         
+        # 定义微信相关平台列表，用于特殊处理
+        self.wechat_platforms = ["gewechat", "wechatpadpro", "wecom"]
+        
         # 从全局注册表获取调度器，如果不存在则创建
         if sys._GLOBAL_SCHEDULER_REGISTRY['scheduler'] is None:
             sys._GLOBAL_SCHEDULER_REGISTRY['scheduler'] = AsyncIOScheduler()
@@ -481,12 +484,12 @@ class ReminderScheduler:
                                         
                                     # 不再尝试分割session_id，而是直接使用消息来源标识平台
                                     platform_name = "unknown"
-                                    if unified_msg_origin.startswith("gewechat"):
-                                        platform_name = "gewechat"
-                                    elif unified_msg_origin.startswith("aiocqhttp"):
-                                        platform_name = "aiocqhttp"
-                                    elif unified_msg_origin.startswith("ntchat"):
-                                        platform_name = "ntchat"
+                                    if any(unified_msg_origin.startswith(platform) for platform in self.wechat_platforms):
+                                        # 如果是微信相关平台，使用前缀作为平台名称
+                                        for platform in self.wechat_platforms:
+                                            if unified_msg_origin.startswith(platform):
+                                                platform_name = platform
+                                                break
                                     elif ":" in unified_msg_origin:
                                         # 如果有冒号，尝试获取第一段作为平台名
                                         platform_name = unified_msg_origin.split(":", 1)[0]
@@ -697,13 +700,13 @@ class ReminderScheduler:
                         if not is_private_chat and "creator_id" in reminder and reminder["creator_id"]:
                             if original_msg_origin.startswith("aiocqhttp"):
                                 final_msg.chain.append(At(qq=reminder["creator_id"]))  # QQ平台
-                            elif original_msg_origin.startswith("gewechat"):
-                                # 微信平台 - 使用用户名/昵称而不是ID
+                            elif any(original_msg_origin.startswith(platform) for platform in self.wechat_platforms):
+                                # 所有微信平台 - 使用用户名/昵称而不是ID
                                 if "creator_name" in reminder and reminder["creator_name"]:
-                                    final_msg.chain.append(At(qq=reminder["creator_id"], name=reminder["creator_name"]))
+                                    final_msg.chain.append(Plain(f"@{reminder['creator_name']} "))
                                 else:
                                     # 如果没有保存用户名，尝试使用ID
-                                    final_msg.chain.append(At(qq=reminder["creator_id"]))
+                                    final_msg.chain.append(Plain(f"@{reminder['creator_id']} "))
                             else:
                                 # 其他平台的@实现
                                 final_msg.chain.append(Plain(f"@{reminder['creator_id']} "))
@@ -816,15 +819,15 @@ class ReminderScheduler:
                 
                 # 如果不是私聊且存在创建者ID，则添加@（明确使用私聊判断）
                 if not is_private_chat and "creator_id" in reminder and reminder["creator_id"]:
-                    if unified_msg_origin.startswith("aiocqhttp"):
+                    if original_msg_origin.startswith("aiocqhttp"):
                         msg.chain.append(At(qq=reminder["creator_id"]))  # QQ平台
-                    elif unified_msg_origin.startswith("gewechat"):
-                        # 微信平台 - 使用用户名/昵称而不是ID
+                    elif any(original_msg_origin.startswith(platform) for platform in self.wechat_platforms):
+                        # 所有微信平台 - 使用用户名/昵称而不是ID
                         if "creator_name" in reminder and reminder["creator_name"]:
-                            msg.chain.append(At(qq=reminder["creator_id"], name=reminder["creator_name"]))
+                            msg.chain.append(Plain(f"@{reminder['creator_name']} "))
                         else:
                             # 如果没有保存用户名，尝试使用ID
-                            msg.chain.append(At(qq=reminder["creator_id"]))
+                            msg.chain.append(Plain(f"@{reminder['creator_id']} "))
                     else:
                         # 其他平台的@实现
                         msg.chain.append(Plain(f"@{reminder['creator_id']} "))
@@ -869,13 +872,13 @@ class ReminderScheduler:
             if not is_private_chat and "creator_id" in reminder and reminder["creator_id"]:
                 if unified_msg_origin.startswith("aiocqhttp"):
                     msg.chain.append(At(qq=reminder["creator_id"]))  # QQ平台
-                elif unified_msg_origin.startswith("gewechat"):
-                    # 微信平台 - 使用用户名/昵称而不是ID
+                elif any(unified_msg_origin.startswith(platform) for platform in self.wechat_platforms):
+                    # 所有微信平台 - 使用用户名/昵称而不是ID
                     if "creator_name" in reminder and reminder["creator_name"]:
-                        msg.chain.append(At(qq=reminder["creator_id"], name=reminder["creator_name"]))
+                        msg.chain.append(Plain(f"@{reminder['creator_name']} "))
                     else:
                         # 如果没有保存用户名，尝试使用ID
-                        msg.chain.append(At(qq=reminder["creator_id"]))
+                        msg.chain.append(Plain(f"@{reminder['creator_id']} "))
                 else:
                     # 其他平台的@实现
                     msg.chain.append(Plain(f"@{reminder['creator_id']} "))
@@ -1100,31 +1103,54 @@ class ReminderScheduler:
     def get_original_session_id(self, session_id):
         """
         从隔离格式的会话ID中提取原始会话ID，用于消息发送
-        
-        Args:
-            session_id: 可能是隔离格式的会话ID
-            
-        Returns:
-            str: 原始会话ID，适合用于消息发送
         """
+        # 检查是否是微信平台
+        is_wechat_platform = any(session_id.startswith(platform) for platform in self.wechat_platforms)
+        
         # 处理微信群聊的特殊情况
-        if "chatroom_" in session_id:
-            # 微信群聊ID的格式: gewechat:GroupMessage:12345678@chatroom_wxid_abc123
+        if "@chatroom" in session_id:
+            # 微信群聊ID可能有两种格式:
+            # 1. platform:GroupMessage:12345678@chatroom_wxid_abc123 (带用户隔离)
+            # 2. platform:GroupMessage:12345678@chatroom (原始格式)
+            
+            # 提取平台前缀
+            platform_prefix = ""
+            if ":" in session_id:
+                parts = session_id.split(":", 2)
+                if len(parts) >= 2:
+                    platform_prefix = f"{parts[0]}:{parts[1]}:"
+            
+            # 然后处理@chatroom后面的部分
             chatroom_parts = session_id.split("@chatroom")
-            if len(chatroom_parts) == 2 and chatroom_parts[1].startswith("_"):
-                # 恢复原始ID
-                return f"{chatroom_parts[0]}@chatroom"
+            if len(chatroom_parts) == 2:
+                if chatroom_parts[1].startswith("_"):
+                    # 如果有下划线，说明这是带用户隔离的格式
+                    room_id = chatroom_parts[0].split(":")[-1]
+                    return f"{platform_prefix}{room_id}@chatroom"
+                else:
+                    # 这已经是原始格式，直接返回
+                    return session_id
         
         # 处理其他平台的情况
         if "_" in session_id and ":" in session_id:
-            # 如果是QQ或其他平台，通常格式是 platform:type:id_user_id
-            
-            # 首先判断是否是gewechat平台（微信平台ID通常包含下划线）
-            if session_id.startswith("gewechat"):
-                # 微信平台需要特殊处理，使用上面的chatroom方式
-                # 对于非群聊，通过规则判断
-                # 如果是gewechat:FriendMessage:wxid_abc123_def456，我们通常不需要处理
+            # 首先判断是否是微信相关平台
+            if is_wechat_platform:
+                # 微信平台需要特殊处理
                 # 因为微信个人ID通常包含下划线，不适合用通用分割方法
+                
+                # 但是，如果明确是群聊隔离格式，仍然需要处理
+                if "@chatroom_" in session_id:
+                    # 这部分已经在上面处理过了
+                    pass
+                elif ":GroupMessage:" in session_id and "_" in session_id.split(":")[-1]:
+                    # 可能是其他格式的群聊隔离
+                    parts = session_id.split(":")
+                    if len(parts) >= 3:
+                        group_parts = parts[-1].rsplit("_", 1)
+                        if len(group_parts) == 2:
+                            return f"{parts[0]}:{parts[1]}:{group_parts[0]}"
+                
+                # 如果没有命中上述规则，返回原始ID
                 return session_id
             else:
                 # 非微信平台，使用通用规则
