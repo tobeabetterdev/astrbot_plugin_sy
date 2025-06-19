@@ -464,7 +464,7 @@ class ReminderScheduler:
                                 # 获取函数对象和处理器
                                 func_obj = func_tool.get_func(func_name)
                                 
-                                if func_obj and func_obj.handler:
+                                if func_obj:
                                     # 创建最小的事件对象来调用函数
                                     # 导入必要的类
                                     from astrbot.api.platform import AstrBotMessage, PlatformMetadata, MessageType, MessageMember
@@ -601,7 +601,11 @@ class ReminderScheduler:
                                         has_sent_message_before = event._has_send_oper
                                         
                                         # 调用函数
-                                        func_result = await func_obj.handler(event, **func_args)
+                                        if func_obj.handler:
+                                            func_result = await func_obj.handler(event, **func_args)
+                                        else:
+                                            func_result = await func_obj.execute(**func_args)
+                                        
                                         logger.info(f"函数调用结果: {func_result}")
                                         
                                         # 检查函数是否已经自己发送了消息
