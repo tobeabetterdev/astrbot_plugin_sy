@@ -148,7 +148,8 @@ class TaskExecutor:
                     
                     # 特殊处理含多个冒号的情况
                     if session_str.count(":") >= 2:
-                        parts = session_str.split(":", 2)
+                        # 正确分割，避免 "too many values to unpack" 错误
+                        parts = session_str.split(":")
                         platform = parts[0]
                         
                         # 智能判断消息类型
@@ -159,7 +160,8 @@ class TaskExecutor:
                         else:
                             message_type = parts[1] if len(parts) > 1 else "FriendMessage"
                             
-                        session_id = parts[2] if len(parts) > 2 else "unknown"
+                        # 将剩余部分重新组合作为session_id
+                        session_id = ":".join(parts[2:]) if len(parts) > 2 else "unknown"
                     else:
                         # 处理简单情况
                         parts = session_str.split(":", 1)
@@ -219,6 +221,10 @@ class TaskExecutor:
         if not hasattr(event, "session_id"):
             event.session_id = send_session_id
         
+        # unified_msg_origin会在AstrMessageEvent构造函数中自动生成，但我们要确保它是正确的
+        # 如果需要，可以手动覆盖（但通常不需要）
+        # event.unified_msg_origin = send_session_id
+        
         # 添加get_session_id方法
         if not hasattr(event, "get_session_id"):
             event.get_session_id = lambda: send_session_id
@@ -242,21 +248,73 @@ class TaskExecutor:
                     return reminder.get("creator_id", "unknown")
             event.get_sender_id = safe_get_sender
         else:
-            event.get_sender_id = lambda: reminder.get("creator_id", "unknown")
+            # 确保返回的是字符串类型的ID
+            def get_sender_id():
+                sender_id = reminder.get("creator_id", "unknown")
+                return str(sender_id) if sender_id else "unknown"
+            event.get_sender_id = get_sender_id
+        
+        # 添加结果管理方法，支持复杂消息类型
+        if not hasattr(event, '_result'):
+            from astrbot.core.message.message_event_result import MessageEventResult
+            event._result = MessageEventResult()
+        
+        if not hasattr(event, 'get_result'):
+            def get_result():
+                return event._result
+            event.get_result = get_result
+        
+        if not hasattr(event, 'set_result'):
+            def set_result(result):
+                if hasattr(result, 'chain'):
+                    event._result = result
+                else:
+                    # 如果是字符串，转换为MessageEventResult
+                    from astrbot.core.message.message_event_result import MessageEventResult
+                    from astrbot.core.message.components import Plain
+                    msg_result = MessageEventResult()
+                    msg_result.chain.append(Plain(str(result)))
+                    event._result = msg_result
+            event.set_result = set_result
     
     def _create_event_object(self, task_text: str, unified_msg_origin: str, reminder: dict, is_private_chat: bool, send_session_id: str):
         """创建事件对象"""
         # 创建基本消息对象
         msg = AstrBotMessage()
         msg.message_str = task_text
-        msg.session_id = unified_msg_origin
+        msg.session_id = send_session_id  # 使用发送用的session_id
         msg.type = MessageType.FRIEND_MESSAGE if is_private_chat else MessageType.GROUP_MESSAGE
+        
+        # 设置机器人自身ID（很多插件可能需要这个）
+        msg.self_id = "astrbot_reminder"
+        
+        # 设置消息链（包含任务文本）
+        from astrbot.core.message.components import Plain
+        msg.message = [Plain(task_text)]
         
         # 如果有创建者ID，则设置发送者信息
         if "creator_id" in reminder:
             msg.sender = MessageMember(reminder["creator_id"], reminder.get("creator_name", "用户"))
         else:
             msg.sender = MessageMember("unknown", "用户")
+        
+        # 设置群组ID（如果是群聊）
+        if not is_private_chat:
+            # 从session_id中提取群组ID
+            if ":" in send_session_id:
+                parts = send_session_id.split(":")
+                if len(parts) >= 3:
+                    group_id_part = parts[2]
+                    # 处理群组ID，去掉可能的用户隔离后缀
+                    if "_" in group_id_part:
+                        group_id_part = group_id_part.split("_")[0]
+                    msg.group_id = group_id_part
+                else:
+                    msg.group_id = "unknown"
+            else:
+                msg.group_id = "unknown"
+        else:
+            msg.group_id = None
             
         # 不再尝试分割session_id，而是直接使用消息来源标识平台
         platform_name = "unknown"
@@ -270,13 +328,21 @@ class TaskExecutor:
             # 如果有冒号，尝试获取第一段作为平台名
             platform_name = unified_msg_origin.split(":", 1)[0]
 
-        # 创建事件对象
+        # 创建事件对象 - 重要：session_id只需要ID部分，不要包含平台前缀
+        raw_session_id = send_session_id
+        if ":" in send_session_id:
+            parts = send_session_id.split(":")
+            if len(parts) >= 3:
+                raw_session_id = parts[2]  # 只取ID部分
+            else:
+                raw_session_id = send_session_id
+        
         meta = PlatformMetadata(platform_name, "scheduler")
         event = AstrMessageEvent(
             message_str=task_text,
             message_obj=msg,
             platform_meta=meta,
-            session_id=unified_msg_origin
+            session_id=raw_session_id  # 只传入纯粹的session_id
         )
         
         # 添加特殊属性，供函数调用时使用
@@ -352,7 +418,7 @@ class TaskExecutor:
             
             # 检查是否有工具调用
             if response.role == "tool" and hasattr(response, 'tools_call_name') and response.tools_call_name:
-                await self._handle_tool_calls(response, func_tool, task_text, unified_msg_origin, reminder, 
+                need_send_result = await self._handle_tool_calls(response, func_tool, task_text, unified_msg_origin, reminder, 
                                             new_contexts, result_msg, need_send_result)
             elif response.role == "assistant" and response.completion_text:
                 # 如果只有文本回复，构建普通消息
@@ -394,13 +460,13 @@ class TaskExecutor:
         # 收集工具调用结果
         tool_results = []
         has_sent_messages = []  # 记录哪些函数已经自己发送了消息
+        complex_messages = []  # 记录函数返回的复杂消息
         
         is_private_chat = self.message_handler.is_private_chat(unified_msg_origin)
         send_session_id = self._get_send_session_id(unified_msg_origin, is_private_chat)
         
         for i, func_name in enumerate(response.tools_call_name):
             func_args = response.tools_call_args[i] if i < len(response.tools_call_args) else {}
-            func_id = response.tools_call_ids[i] if i < len(response.tools_call_ids) else "unknown"
             
             logger.info(f"执行工具调用: {func_name}({func_args})")
             
@@ -417,25 +483,58 @@ class TaskExecutor:
                         # 记录调用前的状态
                         has_sent_message_before = event._has_send_oper
                         
+                        # 调试信息：记录函数调用的详细参数
+                        logger.info(f"调用函数 {func_name}:")
+                        logger.info(f"  - func_args: {func_args}")
+                        logger.info(f"  - event.unified_msg_origin: {getattr(event, 'unified_msg_origin', 'NOT_SET')}")
+                        logger.info(f"  - event.session_id: {getattr(event, 'session_id', 'NOT_SET')}")
+                        logger.info(f"  - event.message_obj.group_id: {getattr(event.message_obj, 'group_id', 'NOT_SET')}")
+                        logger.info(f"  - event.message_obj.self_id: {getattr(event.message_obj, 'self_id', 'NOT_SET')}")
+                        
                         # 调用函数
                         if func_obj.handler:
                             func_result = await func_obj.handler(event, **func_args)
                         else:
                             func_result = await func_obj.execute(**func_args)
                         
-                        logger.info(f"函数调用结果: {func_result}")
+                        logger.info(f"函数调用结果类型: {type(func_result)}, 值: {func_result}")
                         
                         # 检查函数是否已经自己发送了消息
                         if event._has_send_oper and not has_sent_message_before:
                             logger.info(f"函数 {func_name} 已自行发送消息，不需要我们再发送")
                             has_sent_messages.append(func_name)
                         
-                        # 只有当函数返回值不为None且没有自行发送消息时，才添加到工具结果列表
-                        if func_result is not None and func_name not in has_sent_messages:
-                            tool_results.append({
+                        # 检查函数是否通过event.set_result()设置了复杂消息结果
+                        event_result = None
+                        if hasattr(event, 'get_result') and callable(event.get_result):
+                            event_result = event.get_result()
+                        elif hasattr(event, '_result'):
+                            event_result = event._result
+                        
+                        # 处理复杂消息结果
+                        if event_result and hasattr(event_result, 'chain') and event_result.chain:
+                            logger.info(f"函数 {func_name} 返回了复杂消息结果，包含 {len(event_result.chain)} 个组件")
+                            complex_messages.append({
                                 "name": func_name,
-                                "result": func_result
+                                "message_chain": event_result
                             })
+                            has_sent_messages.append(func_name)  # 标记为已处理
+                        # 处理简单的字符串返回值
+                        elif func_result is not None and func_name not in has_sent_messages:
+                            # 检查返回值是否是MessageEventResult对象
+                            if hasattr(func_result, 'chain'):
+                                logger.info(f"函数 {func_name} 返回了MessageEventResult对象")
+                                complex_messages.append({
+                                    "name": func_name,
+                                    "message_chain": func_result
+                                })
+                                has_sent_messages.append(func_name)
+                            else:
+                                # 简单字符串结果
+                                tool_results.append({
+                                    "name": func_name,
+                                    "result": str(func_result)
+                                })
                     except Exception as e:
                         logger.error(f"执行函数时出错: {str(e)}")
                         if func_name not in has_sent_messages:
@@ -450,23 +549,234 @@ class TaskExecutor:
                 import traceback
                 logger.error(traceback.format_exc())
         
+        # 处理复杂消息（图片、文件等）
+        if complex_messages:
+            await self._handle_complex_messages(complex_messages, unified_msg_origin, reminder)
+        
         # 函数处理逻辑结束后判断是否需要发送结果
         # 如果所有函数都已经自己发送了消息，我们就不需要再发送了
         if len(has_sent_messages) == len(response.tools_call_name):
             logger.info("所有函数都已自行发送消息，不需要额外发送结果")
-            need_send_result = False
+            return False  # 返回不需要发送结果
         # 如果只有部分函数自己发送了消息，我们只润色没有自己发送消息的函数的结果
         elif tool_results:
             await self._process_tool_results(tool_results, task_text, unified_msg_origin, new_contexts, result_msg)
+            return True  # 返回需要发送结果
         else:
             # 没有工具调用结果
             if has_sent_messages:
                 # 如果有函数自己发送了消息，我们不需要再发送额外的消息
-                need_send_result = False
+                return False  # 返回不需要发送结果
             else:
                 result_msg.chain.append(Plain("任务执行完成，但未能获取有效结果。"))
                 # 添加结果到历史记录
                 new_contexts.append({"role": "assistant", "content": "任务执行完成，但未能获取有效结果。"})
+                return True  # 返回需要发送结果
+    
+    async def _handle_complex_messages(self, complex_messages: list, unified_msg_origin: str, reminder: dict):
+        """处理复杂消息类型（图片、文件、视频等）"""
+        import asyncio
+        from astrbot.core.message.components import Plain, Image, File, Video, Record, At, Share
+        
+        for msg_info in complex_messages:
+            func_name = msg_info["name"]
+            message_chain = msg_info["message_chain"]
+            
+            logger.info(f"处理函数 {func_name} 的复杂消息，包含 {len(message_chain.chain)} 个组件")
+            
+            # 创建新的消息链
+            final_msg = MessageChain()
+            
+            # 添加@消息（复用现有逻辑）
+            original_msg_origin = self.message_handler.get_original_session_id(unified_msg_origin)
+            if not self.message_handler.is_private_chat(unified_msg_origin) and "creator_id" in reminder and reminder["creator_id"]:
+                if original_msg_origin.startswith("aiocqhttp"):
+                    final_msg.chain.append(At(qq=reminder["creator_id"]))
+                elif any(original_msg_origin.startswith(platform) for platform in self.wechat_platforms):
+                    if "creator_name" in reminder and reminder["creator_name"]:
+                        final_msg.chain.append(Plain(f"@{reminder['creator_name']} "))
+                    else:
+                        final_msg.chain.append(Plain(f"@{reminder['creator_id']} "))
+                else:
+                    final_msg.chain.append(Plain(f"@{reminder['creator_id']} "))
+            
+            # 处理消息链中的每个组件
+            text_parts = []  # 收集文本部分
+            
+            for component in message_chain.chain:
+                if isinstance(component, Plain):
+                    text_parts.append(component.text)
+                elif isinstance(component, Image):
+                    # 先发送累积的文本（如果有）
+                    if text_parts:
+                        final_msg.chain.append(Plain("".join(text_parts)))
+                        text_parts = []
+                    
+                    # 添加图片组件
+                    final_msg.chain.append(component)
+                    
+                    # 发送这条消息
+                    await self._send_complex_message(final_msg, original_msg_origin, func_name, "图片")
+                    
+                    # 添加发送间隔，避免被限流
+                    await asyncio.sleep(0.5)
+                    
+                    # 重置消息链（保留@部分）
+                    final_msg = MessageChain()
+                    if not self.message_handler.is_private_chat(unified_msg_origin) and "creator_id" in reminder and reminder["creator_id"]:
+                        if original_msg_origin.startswith("aiocqhttp"):
+                            final_msg.chain.append(At(qq=reminder["creator_id"]))
+                        elif any(original_msg_origin.startswith(platform) for platform in self.wechat_platforms):
+                            if "creator_name" in reminder and reminder["creator_name"]:
+                                final_msg.chain.append(Plain(f"@{reminder['creator_name']} "))
+                            else:
+                                final_msg.chain.append(Plain(f"@{reminder['creator_id']} "))
+                        else:
+                            final_msg.chain.append(Plain(f"@{reminder['creator_id']} "))
+                
+                elif isinstance(component, File):
+                    # 先发送累积的文本（如果有）
+                    if text_parts:
+                        final_msg.chain.append(Plain("".join(text_parts)))
+                        text_parts = []
+                    
+                    # 添加文件组件
+                    final_msg.chain.append(component)
+                    
+                    # 发送这条消息
+                    await self._send_complex_message(final_msg, original_msg_origin, func_name, "文件")
+                    
+                    # 添加发送间隔，避免被限流
+                    await asyncio.sleep(0.5)
+                    
+                    # 重置消息链
+                    final_msg = MessageChain()
+                    if not self.message_handler.is_private_chat(unified_msg_origin) and "creator_id" in reminder and reminder["creator_id"]:
+                        if original_msg_origin.startswith("aiocqhttp"):
+                            final_msg.chain.append(At(qq=reminder["creator_id"]))
+                        elif any(original_msg_origin.startswith(platform) for platform in self.wechat_platforms):
+                            if "creator_name" in reminder and reminder["creator_name"]:
+                                final_msg.chain.append(Plain(f"@{reminder['creator_name']} "))
+                            else:
+                                final_msg.chain.append(Plain(f"@{reminder['creator_id']} "))
+                        else:
+                            final_msg.chain.append(Plain(f"@{reminder['creator_id']} "))
+                
+                elif isinstance(component, Video):
+                    # 先发送累积的文本（如果有）
+                    if text_parts:
+                        final_msg.chain.append(Plain("".join(text_parts)))
+                        text_parts = []
+                    
+                    # 添加视频组件
+                    final_msg.chain.append(component)
+                    
+                    # 发送这条消息
+                    await self._send_complex_message(final_msg, original_msg_origin, func_name, "视频")
+                    
+                    # 添加发送间隔，避免被限流
+                    await asyncio.sleep(0.5)
+                    
+                    # 重置消息链
+                    final_msg = MessageChain()
+                    if not self.message_handler.is_private_chat(unified_msg_origin) and "creator_id" in reminder and reminder["creator_id"]:
+                        if original_msg_origin.startswith("aiocqhttp"):
+                            final_msg.chain.append(At(qq=reminder["creator_id"]))
+                        elif any(original_msg_origin.startswith(platform) for platform in self.wechat_platforms):
+                            if "creator_name" in reminder and reminder["creator_name"]:
+                                final_msg.chain.append(Plain(f"@{reminder['creator_name']} "))
+                            else:
+                                final_msg.chain.append(Plain(f"@{reminder['creator_id']} "))
+                        else:
+                            final_msg.chain.append(Plain(f"@{reminder['creator_id']} "))
+                
+                elif isinstance(component, Record):
+                    # 先发送累积的文本（如果有）
+                    if text_parts:
+                        final_msg.chain.append(Plain("".join(text_parts)))
+                        text_parts = []
+                    
+                    # 添加语音组件
+                    final_msg.chain.append(component)
+                    
+                    # 发送这条消息
+                    await self._send_complex_message(final_msg, original_msg_origin, func_name, "语音")
+                    
+                    # 添加发送间隔，避免被限流
+                    await asyncio.sleep(0.5)
+                    
+                    # 重置消息链
+                    final_msg = MessageChain()
+                    if not self.message_handler.is_private_chat(unified_msg_origin) and "creator_id" in reminder and reminder["creator_id"]:
+                        if original_msg_origin.startswith("aiocqhttp"):
+                            final_msg.chain.append(At(qq=reminder["creator_id"]))
+                        elif any(original_msg_origin.startswith(platform) for platform in self.wechat_platforms):
+                            if "creator_name" in reminder and reminder["creator_name"]:
+                                final_msg.chain.append(Plain(f"@{reminder['creator_name']} "))
+                            else:
+                                final_msg.chain.append(Plain(f"@{reminder['creator_id']} "))
+                        else:
+                            final_msg.chain.append(Plain(f"@{reminder['creator_id']} "))
+                
+                elif isinstance(component, Share):
+                    # 先发送累积的文本（如果有）
+                    if text_parts:
+                        final_msg.chain.append(Plain("".join(text_parts)))
+                        text_parts = []
+                    
+                    # 添加分享组件
+                    final_msg.chain.append(component)
+                    
+                    # 发送这条消息
+                    await self._send_complex_message(final_msg, original_msg_origin, func_name, "分享")
+                    
+                    # 添加发送间隔，避免被限流
+                    await asyncio.sleep(0.5)
+                    
+                    # 重置消息链
+                    final_msg = MessageChain()
+                    if not self.message_handler.is_private_chat(unified_msg_origin) and "creator_id" in reminder and reminder["creator_id"]:
+                        if original_msg_origin.startswith("aiocqhttp"):
+                            final_msg.chain.append(At(qq=reminder["creator_id"]))
+                        elif any(original_msg_origin.startswith(platform) for platform in self.wechat_platforms):
+                            if "creator_name" in reminder and reminder["creator_name"]:
+                                final_msg.chain.append(Plain(f"@{reminder['creator_name']} "))
+                            else:
+                                final_msg.chain.append(Plain(f"@{reminder['creator_id']} "))
+                        else:
+                            final_msg.chain.append(Plain(f"@{reminder['creator_id']} "))
+                
+                else:
+                    # 对于其他类型的组件，尝试直接添加
+                    logger.warning(f"处理未知消息组件类型: {type(component)}")
+                    final_msg.chain.append(component)
+            
+            # 发送剩余的文本（如果有）
+            if text_parts:
+                final_msg.chain.append(Plain("".join(text_parts)))
+            
+            # 如果最终消息链中有内容（除了@之外），发送它
+            if len(final_msg.chain) > 1 or (len(final_msg.chain) == 1 and not isinstance(final_msg.chain[0], (At, Plain))):
+                await self._send_complex_message(final_msg, original_msg_origin, func_name, "其他")
+    
+    async def _send_complex_message(self, message_chain: MessageChain, original_msg_origin: str, func_name: str, message_type: str):
+        """发送复杂消息"""
+        try:
+            logger.info(f"发送{message_type}消息到: {original_msg_origin} (来自函数: {func_name})")
+            send_result = await self.context.send_message(original_msg_origin, message_chain)
+            logger.info(f"{message_type}消息发送结果: {send_result}")
+        except Exception as e:
+            logger.error(f"发送{message_type}消息失败: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            
+            # 如果发送失败，尝试发送文本描述
+            try:
+                fallback_msg = MessageChain()
+                fallback_msg.chain.append(Plain(f"[{message_type}消息发送失败: {str(e)}]"))
+                await self.context.send_message(original_msg_origin, fallback_msg)
+            except Exception as e2:
+                logger.error(f"发送备用消息也失败: {str(e2)}")
     
     def _get_send_session_id(self, unified_msg_origin: str, is_private_chat: bool) -> str:
         """获取发送会话ID"""
