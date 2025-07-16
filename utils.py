@@ -1,6 +1,7 @@
 import datetime
 import json
 import os
+import re
 import aiohttp
 from astrbot.api import logger
 
@@ -75,6 +76,24 @@ async def save_reminder_data(data_file: str, reminder_data: dict):
             
     with open(data_file, "w", encoding='utf-8') as f:
         json.dump(reminder_data, f, ensure_ascii=False)
+
+def filter_thinking_content(completion_text: str) -> str:
+    """过滤掉思考链标签和内容"""
+    if not isinstance(completion_text, str):
+        return completion_text
+    # 检查并移除 <think> 标签
+    if r"<think>" in completion_text or r"</think>" in completion_text:
+        # 移除配对的标签及其内容
+        completion_text = re.sub(
+            r"<think>.*?</think>", "", completion_text, flags=re.DOTALL
+        ).strip()
+        # 移除可能残留的单个标签
+        completion_text = (
+            completion_text.replace(r"<think>", "")
+            .replace(r"</think>", "")
+            .strip()
+        )
+    return completion_text
 
 # 法定节假日相关功能
 class HolidayManager:

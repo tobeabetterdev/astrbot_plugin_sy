@@ -3,7 +3,7 @@ from astrbot.api.event import AstrMessageEvent
 from astrbot.api.star import Context
 from astrbot.api import logger
 from apscheduler.schedulers.base import JobLookupError
-from .utils import parse_datetime, save_reminder_data
+from .utils import filter_thinking_content, parse_datetime, save_reminder_data
 
 class ReminderCommands:
     def __init__(self, star_instance):
@@ -62,7 +62,7 @@ class ReminderCommands:
                     session_id=event.session_id,
                     contexts=[]  # 确保contexts是一个空列表而不是None
                 )
-                yield event.plain_result(response.completion_text)
+                yield event.plain_result(filter_thinking_content(response.completion_text))
             except Exception as e:
                 logger.error(f"在list_reminders中调用LLM时出错: {str(e)}")
                 # 如果LLM调用失败，回退到基本显示
@@ -154,7 +154,7 @@ class ReminderCommands:
                 session_id=event.session_id,
                 contexts=[]  # 确保contexts是一个空列表而不是None
             )
-            yield event.plain_result(response.completion_text)
+            yield event.plain_result(filter_thinking_content(response.completion_text))
         else:
             yield event.plain_result(f"已删除{item_type}：{removed['text']}")
 

@@ -6,6 +6,7 @@ from astrbot.api.event import MessageChain
 from astrbot.api.message_components import At, Plain
 from astrbot.api.platform import AstrBotMessage, PlatformMetadata, MessageType, MessageMember
 from astrbot.core.platform.astr_message_event import AstrMessageEvent, MessageSesion
+from .utils import filter_thinking_content
 
 
 class ReminderMessageHandler:
@@ -422,9 +423,9 @@ class TaskExecutor:
                                             new_contexts, result_msg, need_send_result)
             elif response.role == "assistant" and response.completion_text:
                 # 如果只有文本回复，构建普通消息
-                result_msg.chain.append(Plain(response.completion_text))
+                result_msg.chain.append(Plain(filter_thinking_content(response.completion_text)))
                 # 添加AI的回复到历史记录
-                new_contexts.append({"role": "assistant", "content": response.completion_text})
+                new_contexts.append({"role": "assistant", "content": filter_thinking_content(response.completion_text)})
             else:
                 # 没有文本回复也没有工具调用，返回默认消息
                 result_msg.chain.append(Plain("任务执行完成，但未返回结果。"))
@@ -835,9 +836,9 @@ class TaskExecutor:
         )
         
         if summary_response and summary_response.completion_text:
-            result_msg.chain.append(Plain(summary_response.completion_text))
+            result_msg.chain.append(Plain(filter_thinking_content(summary_response.completion_text)))
             # 添加AI的回复到历史记录
-            new_contexts.append({"role": "assistant", "content": summary_response.completion_text})
+            new_contexts.append({"role": "assistant", "content": filter_thinking_content(summary_response.completion_text)})
         else:
             # 如果润色失败，直接显示原始结果
             result_text = "执行结果:\n"
@@ -962,7 +963,7 @@ class ReminderExecutor:
         )
         
         # 发送提醒消息
-        await self.message_handler.send_reminder_message(unified_msg_origin, reminder, response.completion_text, is_task=False)
+        await self.message_handler.send_reminder_message(unified_msg_origin, reminder, filter_thinking_content(response.completion_text), is_task=False)
         
         # 如果有对话上下文，记录这次提醒到对话历史
         if curr_cid and conversation:
@@ -971,7 +972,7 @@ class ReminderExecutor:
                 # 添加系统消息表示这是一个提醒
                 new_contexts.append({"role": "system", "content": f"系统在 {current_time} 触发了提醒: {reminder['text']}"})
                 # 添加AI的回复
-                new_contexts.append({"role": "assistant", "content": response.completion_text})
+                new_contexts.append({"role": "assistant", "content": filter_thinking_content(response.completion_text)})
                 
                 # 获取原始消息ID（去除用户隔离部分）
                 original_msg_origin = self.message_handler.get_original_session_id(unified_msg_origin)
